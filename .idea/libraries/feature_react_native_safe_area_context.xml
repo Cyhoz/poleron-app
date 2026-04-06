@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="feature-react-native-safe-area-context">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/node_modules/react-native-safe-area-context/android/build/intermediates/merged_java_res/debug/mergeDebugJavaResource/feature-react-native-safe-area-context.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

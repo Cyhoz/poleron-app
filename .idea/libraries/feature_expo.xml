@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="feature-expo">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/node_modules/expo/android/build/intermediates/merged_java_res/debug/mergeDebugJavaResource/feature-expo.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

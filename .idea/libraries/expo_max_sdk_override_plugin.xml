@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="expo-max-sdk-override-plugin">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/node_modules/expo-modules-autolinking/android/expo-gradle-plugin/expo-max-sdk-override-plugin/build/libs/expo-max-sdk-override-plugin.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>

@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "Tu Poleron",
+    "slug": "tu-poleron",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#111827"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.cyhoz.tupoleron"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#111827",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "package": "com.cyhoz.tupoleron",
+      "permissions": [
+        "WRITE_EXTERNAL_STORAGE",
+        "VIBRATE",
+        "NOTIFICATIONS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/icon.png",
+      "lang": "es"
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#3B82F6"
+        }
+      ],
+      "expo-sharing",
+      "expo-file-system"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c3f5b7d0-8b84-42fa-930e-45bb6d125037"
+      }
+    }
+  }
+}

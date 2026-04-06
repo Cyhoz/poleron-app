@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+  
+    // Función para verificar si el usuario es un administrador autenticado
+    function isAdmin() {
+      return request.auth != null;
+    }
+
+    // Reglas para la colección "orders" (Pedidos)
+    // Cualquiera puede crear un pedido (write/create).
+    // Solo un administrador puede leer (list/get), actualizar o borrar pedidos.
+    match /orders/{orderId} {
+      allow create: if true;
+      allow read, update, delete: if isAdmin();
+    }
+
+    // Reglas para la colección "config" (Configuración y Tallas)
+    // Cualquiera puede leer la configuración (las medidas estándar son consultadas por la app cliente).
+    // Solo el administrador puede escribir o modificar estas configuraciones.
+    match /config/{document=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}

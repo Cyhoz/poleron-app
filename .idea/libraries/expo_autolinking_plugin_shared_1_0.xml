@@ -1,0 +1,9 @@
+<component name="libraryTable">
+  <library name="expo-autolinking-plugin-shared-1.0">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/node_modules/expo-modules-autolinking/android/expo-gradle-plugin/expo-autolinking-plugin-shared/build/libs/expo-autolinking-plugin-shared-1.0.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES />
+  </library>
+</component>
