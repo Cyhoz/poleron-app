@@ -119,22 +119,17 @@ export default function AdminScreen() {
         if (token) saveAdminPushToken(token);
       });
 
-      return () => clearInterval(interval);
-
       // Sincronizar nombres válidos
       const unsubscribeNames = subscribeToValidNames((names) => {
         setValidNames(names);
       });
+
       return () => {
+        clearInterval(interval);
         if (unsubscribeOrders) unsubscribeOrders();
         unsubscribeNames();
       };
     }
-
-      // Cleanup managed inside the block above
-    }
-
-    return () => {};
   }, [isAuthenticated]);
 
   useEffect(() => {

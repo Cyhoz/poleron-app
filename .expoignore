@@ -1,0 +1,7 @@
+backend/
+scripts/
+Directorio-Oficial-EE-2025/
+*.xlsx
+*.csv
+serviceAccountKey.json
+.env
