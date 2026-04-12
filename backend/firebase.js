@@ -10,8 +10,21 @@ const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './servi
 const fs = require('fs');
 const path = require('path');
 
-// 1. Intentar cargar por archivo físico
-if (fs.existsSync(path.resolve(__dirname, serviceAccountPath))) {
+// 1. Intentar cargar por variable de entorno con el JSON completo (Recomendado para Render)
+if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    try {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        db = admin.firestore();
+        console.log('✅ Conectado a Firebase mediante Variable de Entorno (JSON Completo)');
+    } catch (err) {
+        console.error('❌ Error al parsear FIREBASE_SERVICE_ACCOUNT_JSON:', err.message);
+    }
+}
+// 2. Intentar cargar por archivo físico (Solo para desarrollo local)
+else if (fs.existsSync(path.resolve(__dirname, serviceAccountPath))) {
     const serviceAccount = require(path.resolve(__dirname, serviceAccountPath));
     admin.initializeApp({
         credential: admin.credential.cert(serviceAccount)

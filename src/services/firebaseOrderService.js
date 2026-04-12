@@ -3,41 +3,27 @@ import { db } from './firebaseConfig';
 
 export const saveOrder = async (orderData) => {
   try {
-    const docRef = await addDoc(collection(db, "orders"), {
-      ...orderData,
-      date: new Date().toISOString()
-    });
+    // Definir la URL de tu API en Render (igual que en ClientScreen)
+    const API_BASE_URL = 'https://poleron-app-2.onrender.com';
     
-    // Notify admin via push notification automatically if token exists
-    try {
-      const adminDoc = await getDoc(doc(db, "config", "admin"));
-      if (adminDoc.exists()) {
-        const { pushToken } = adminDoc.data();
-        if (pushToken) {
-           await fetch('https://exp.host/--/api/v2/push/send', {
-              method: 'POST',
-              headers: {
-                Accept: 'application/json',
-                'Accept-encoding': 'gzip, deflate',
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                to: pushToken,
-                sound: 'default',
-                title: '🛒 ¡Nuevo Polerón Pedido!',
-                body: `${orderData.personalInfo.nombre} ${orderData.personalInfo.apellido || ''} de ${orderData.personalInfo.curso} ordenó talla ${orderData.tallaElegida}.`,
-                data: { orderId: docRef.id },
-              }),
-            });
-        }
-      }
-    } catch (e) {
-      console.log('Error enviando notificación Push', e);
-    }
+    // Enviamos el pedido al backend para que sea cifrado y guardado de forma segura
+    const response = await fetch(`${API_BASE_URL}/api/orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(orderData)
+    });
 
+    if (!response.ok) throw new Error('Error en servidor seguro');
+    const result = await response.json();
+
+    // Notificación Push para el administrador (opcional, se puede dejar en el backend también)
+    // Para mayor seguridad, el backend debería encargarse de las notificaciones
+    
     return true;
   } catch (error) {
-    console.error("Error guardando pedido en Firebase: ", error); // Note: might fail if Firestore Database wasn't created yet or Rules block it
+    console.error("Error guardando pedido de forma cifrada: ", error);
     return false;
   }
 };
@@ -75,17 +61,13 @@ export const subscribeToOrders = (callback) => {
 
 export const getOrders = async () => {
   try {
-    const q = query(collection(db, "orders"));
-    const querySnapshot = await getDocs(q);
-    const orders = [];
-    querySnapshot.forEach((doc) => {
-      orders.push({ id: doc.id, ...doc.data() });
-    });
-    // Sort in memory locally to avoid composite index requirements on Firestore
-    orders.sort((a,b) => new Date(b.date) - new Date(a.date));
-    return orders;
+    const API_BASE_URL = 'https://poleron-app-2.onrender.com';
+    const response = await fetch(`${API_BASE_URL}/api/admin/orders`);
+    if (!response.ok) throw new Error('Error al recuperar pedidos seguros');
+    const data = await response.json();
+    return data;
   } catch (error) {
-    console.error("Error leyendo pedidos desde Firebase: ", error);
+    console.error("Error leyendo pedidos descifrados: ", error);
     return [];
   }
 };

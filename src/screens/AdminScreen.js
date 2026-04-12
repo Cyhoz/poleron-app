@@ -30,6 +30,7 @@ export default function AdminScreen() {
   const [passwordInput, setPasswordInput] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [rememberMe, setRememberMe] = useState(true);
 
   const [activeTab, setActiveTab] = useState('tallas');
 
@@ -39,11 +40,26 @@ export default function AdminScreen() {
         setIsAuthenticated(true);
       } else {
         setIsAuthenticated(false);
+        checkRememberedUser();
       }
       setIsCheckingAuth(false);
     });
     return unsubscribe;
   }, []);
+
+  const checkRememberedUser = async () => {
+    try {
+      const savedEmail = await AsyncStorage.getItem('admin_email');
+      const savedPass = await AsyncStorage.getItem('admin_pass');
+      const savedRemember = await AsyncStorage.getItem('admin_remember');
+      
+      if (savedEmail && savedPass && savedRemember === 'true') {
+        setEmailInput(savedEmail);
+        setPasswordInput(savedPass);
+        setRememberMe(true);
+      }
+    } catch (e) { console.log(e); }
+  };
 
   const [measurements, setMeasurements] = useState({
     '16': { pecho: '45', largo: '60', manga: '55' },
@@ -90,14 +106,20 @@ export default function AdminScreen() {
       });
 
       setIsLoadingOrders(true);
-      unsubscribeOrders = subscribeToOrders((data) => {
+      const refreshOrders = async () => {
+        const data = await getOrders();
         setOrders(data);
         setIsLoadingOrders(false);
-      });
-
+      };
+      refreshOrders();
+      // Polling cada 30 segundos para simular tiempo real de forma segura
+      const interval = setInterval(refreshOrders, 30000);
+      
       registerForPushNotificationsAsync().then(token => {
         if (token) saveAdminPushToken(token);
       });
+
+      return () => clearInterval(interval);
 
       // Sincronizar nombres válidos
       const unsubscribeNames = subscribeToValidNames((names) => {
@@ -109,9 +131,10 @@ export default function AdminScreen() {
       };
     }
 
-    return () => {
-      if (unsubscribeOrders) unsubscribeOrders();
-    };
+      // Cleanup managed inside the block above
+    }
+
+    return () => {};
   }, [isAuthenticated]);
 
   useEffect(() => {
@@ -122,10 +145,13 @@ export default function AdminScreen() {
     let token;
     if (Platform.OS === 'android') {
       await Notifications.setNotificationChannelAsync('default', {
-        name: 'default',
+        name: 'Pedidos Nuevos',
         importance: Notifications.AndroidImportance.MAX,
         vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#FF231F7C',
+        lightColor: '#3B82F6',
+        showBadge: true,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        sound: 'default'
       });
     }
 
@@ -275,6 +301,17 @@ export default function AdminScreen() {
     setIsLoggingIn(true);
     try {
       await signInWithEmailAndPassword(auth, emailInput, passwordInput);
+      
+      if (rememberMe) {
+        await AsyncStorage.setItem('admin_email', emailInput);
+        await AsyncStorage.setItem('admin_pass', passwordInput);
+        await AsyncStorage.setItem('admin_remember', 'true');
+      } else {
+        await AsyncStorage.removeItem('admin_email');
+        await AsyncStorage.removeItem('admin_pass');
+        await AsyncStorage.setItem('admin_remember', 'false');
+      }
+
       setIsAuthenticated(true);
     } catch (e) {
       console.log('Login error:', e);
@@ -437,6 +474,21 @@ export default function AdminScreen() {
           value={passwordInput}
           onChangeText={setPasswordInput}
         />
+        <TouchableOpacity 
+          style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 24 }}
+          onPress={() => setRememberMe(!rememberMe)}
+        >
+          <View style={{ 
+            width: 22, height: 22, borderRadius: 6, borderWidth: 2, 
+            borderColor: '#3B82F6', marginRight: 10,
+            backgroundColor: rememberMe ? '#3B82F6' : 'transparent',
+            justifyContent: 'center', alignItems: 'center'
+          }}>
+            {rememberMe && <Text style={{ color: '#fff', fontSize: 14 }}>✓</Text>}
+          </View>
+          <Text style={{ color: '#D1D5DB' }}>Permanecer siempre conectado</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.loginButton} onPress={handleLogin} disabled={isLoggingIn}>
           {isLoggingIn ? <ActivityIndicator color="#fff" /> : <Text style={styles.loginButtonText}>Autenticar Servidor</Text>}
         </TouchableOpacity>
