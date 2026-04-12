@@ -165,3 +165,37 @@ export const subscribeToAppData = (callback) => {
     }
   });
 };
+
+// --- Manejo de Nombres Autorizados ---
+
+export const saveValidName = async (name) => {
+  try {
+    const nameUpper = name.toUpperCase().trim();
+    await setDoc(doc(db, "valid_names", nameUpper), { addedAt: new Date().toISOString() });
+    return true;
+  } catch (error) {
+    console.error("Error guardando nombre válido", error);
+    return false;
+  }
+};
+
+export const deleteValidName = async (name) => {
+  try {
+    await deleteDoc(doc(db, "valid_names", name.toUpperCase().trim()));
+    return true;
+  } catch (error) {
+    console.error("Error borrando nombre válido", error);
+    return false;
+  }
+};
+
+export const subscribeToValidNames = (callback) => {
+  const q = query(collection(db, "valid_names"));
+  return onSnapshot(q, (snapshot) => {
+    const names = [];
+    snapshot.forEach((doc) => {
+      names.push(doc.id); // El ID es el nombre en mayúsculas
+    });
+    callback(names.sort());
+  });
+};

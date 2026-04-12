@@ -8,19 +8,38 @@ service cloud.firestore {
     }
 
     // Reglas para la colección "orders" (Pedidos)
-    // Cualquiera puede crear un pedido (write/create).
-    // Solo un administrador puede leer (list/get), actualizar o borrar pedidos.
+    // - Cualquiera puede crear un pedido (create).
+    // - Solo un administrador puede leer (read), actualizar o borrar pedidos.
     match /orders/{orderId} {
       allow create: if true;
       allow read, update, delete: if isAdmin();
     }
 
     // Reglas para la colección "config" (Configuración y Tallas)
-    // Cualquiera puede leer la configuración (las medidas estándar son consultadas por la app cliente).
-    // Solo el administrador puede escribir o modificar estas configuraciones.
-    match /config/{document=**} {
+    // - Configuración general (sizes, appData): Lectura pública, escritura Admin.
+    match /config/sizes {
       allow read: if true;
       allow write: if isAdmin();
     }
+    match /config/appData {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    // - Configuración de administración (Push Tokens): PRIVADO. Solo Admin lee/escribe.
+    match /config/admin {
+      allow read, write: if isAdmin();
+    }
+
+    // Reglas para catálogos (Schools y Valid Names)
+    // Solo lectura pública para que la App pueda funcionar si se consulta directo (aunque se use API)
+    match /schools/{schoolId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /valid_names/{name} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
   }
 }

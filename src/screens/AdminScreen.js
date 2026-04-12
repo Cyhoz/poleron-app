@@ -8,7 +8,7 @@ import * as Sharing from 'expo-sharing';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as XLSX from 'xlsx';
-import { getOrders, deleteOrder, saveAdminSizes, getAdminSizes, saveAdminPushToken, subscribeToOrders, saveAppData, getAppData, subscribeToAppData } from '../services/firebaseOrderService';
+import { getOrders, deleteOrder, saveAdminSizes, getAdminSizes, saveAdminPushToken, subscribeToOrders, saveAppData, getAppData, subscribeToAppData, saveValidName, deleteValidName, subscribeToValidNames } from '../services/firebaseOrderService';
 import { auth } from '../services/firebaseConfig';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 
@@ -66,6 +66,8 @@ export default function AdminScreen() {
   const [newItemName, setNewItemName] = useState('');
   const [selectedRegionIdx, setSelectedRegionIdx] = useState(null);
   const [isSavingAppData, setIsSavingAppData] = useState(false);
+  const [validNames, setValidNames] = useState([]);
+  const [newValidName, setNewValidName] = useState('');
 
   useEffect(() => {
     let unsubscribeOrders = null;
@@ -96,6 +98,15 @@ export default function AdminScreen() {
       registerForPushNotificationsAsync().then(token => {
         if (token) saveAdminPushToken(token);
       });
+
+      // Sincronizar nombres válidos
+      const unsubscribeNames = subscribeToValidNames((names) => {
+        setValidNames(names);
+      });
+      return () => {
+        if (unsubscribeOrders) unsubscribeOrders();
+        unsubscribeNames();
+      };
     }
 
     return () => {
@@ -385,6 +396,16 @@ export default function AdminScreen() {
     await saveAppData(updated);
   };
 
+  const handleAddValidName = async () => {
+    if (!newValidName.trim()) return;
+    const success = await saveValidName(newValidName);
+    if (success) setNewValidName('');
+  };
+
+  const handleRemoveValidName = async (name) => {
+    await deleteValidName(name);
+  };
+
   if (isCheckingAuth) {
     return (
       <View style={[styles.loginContainer, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -591,6 +612,33 @@ export default function AdminScreen() {
                 )}
               </View>
             ))}
+          </View>
+
+          {/* NOMBRES AUTORIZADOS */}
+          <View style={styles.configCard}>
+            <Text style={styles.configTitle}>👤 Nombres de Alumnos Autorizados</Text>
+            <Text style={styles.label}>Añade nombres específicos que quieres permitir (Ej. apodos permitidos o alumnos nuevos).</Text>
+            <View style={styles.addInputRow}>
+              <TextInput
+                style={[styles.input, { flex: 1, marginRight: 8 }]}
+                placeholder="Añadir Nombre..."
+                placeholderTextColor="#6B7280"
+                value={newValidName}
+                onChangeText={setNewValidName}
+              />
+              <TouchableOpacity style={styles.addButton} onPress={handleAddValidName}>
+                <Plus color="#fff" size={24} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.tagsContainer}>
+              {validNames.map((name, i) => (
+                <View key={i} style={styles.tag}>
+                  <Text style={styles.tagText}>{name}</Text>
+                  <TouchableOpacity onPress={() => handleRemoveValidName(name)}><X color="#fff" size={14} style={{ marginLeft: 4 }} /></TouchableOpacity>
+                </View>
+              ))}
+            </View>
+            {validNames.length === 0 && <Text style={styles.moreItemsText}>No hay nombres adicionales guardados en la nube.</Text>}
           </View>
         </ScrollView>
       ) : (
