@@ -2,7 +2,7 @@
   "expo": {
     "name": "Tu Poleron",
     "slug": "tu-poleron",
-    "version": "1.0.0",
+    "version": "1.1.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -31,17 +31,6 @@
       "favicon": "./assets/icon.png",
       "lang": "es"
     },
-    "plugins": [
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/icon.png",
-          "color": "#3B82F6"
-        }
-      ],
-      "expo-sharing",
-      "expo-file-system"
-    ],
     "extra": {
       "eas": {
         "projectId": "c3f5b7d0-8b84-42fa-930e-45bb6d125037"

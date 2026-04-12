@@ -1,7 +1,7 @@
-@echo off
-echo Generando APK localmente (Android Nativo Puro sin Expo)...
+:: 1. Subir a la raiz
+cd ..
 
-:: 1. Navegamos a la carpeta de Android
+:: 2. Navegamos a la carpeta de Android
 cd android
 
 :: 2. Limpiamos y construimos el APK de lanzamiento

@@ -1,4 +1,4 @@
-import { collection, addDoc, getDocs, deleteDoc, doc, setDoc, getDoc, query } from 'firebase/firestore';
+import { collection, addDoc, getDocs, deleteDoc, doc, setDoc, getDoc, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 
 export const saveOrder = async (orderData) => {
@@ -25,7 +25,7 @@ export const saveOrder = async (orderData) => {
                 to: pushToken,
                 sound: 'default',
                 title: '🛒 ¡Nuevo Polerón Pedido!',
-                body: `${orderData.personalInfo.nombre} de ${orderData.personalInfo.curso} ordenó talla ${orderData.tallaElegida}.`,
+                body: `${orderData.personalInfo.nombre} ${orderData.personalInfo.apellido || ''} de ${orderData.personalInfo.curso} ordenó talla ${orderData.tallaElegida}.`,
                 data: { orderId: docRef.id },
               }),
             });
@@ -40,6 +40,37 @@ export const saveOrder = async (orderData) => {
     console.error("Error guardando pedido en Firebase: ", error); // Note: might fail if Firestore Database wasn't created yet or Rules block it
     return false;
   }
+};
+
+export const checkExistingOrder = async (nombre, apellido, curso) => {
+  try {
+    const q = query(
+      collection(db, "orders"),
+      where("personalInfo.nombre", "==", nombre),
+      where("personalInfo.apellido", "==", apellido),
+      where("personalInfo.curso", "==", curso)
+    );
+    const querySnapshot = await getDocs(q);
+    return !querySnapshot.empty;
+  } catch (error) {
+    console.error("Error verificando pedidos existentes: ", error);
+    return false;
+  }
+};
+
+export const subscribeToOrders = (callback) => {
+  const q = query(collection(db, "orders"));
+  return onSnapshot(q, (querySnapshot) => {
+    const orders = [];
+    querySnapshot.forEach((doc) => {
+      orders.push({ id: doc.id, ...doc.data() });
+    });
+    // Sort in memory locally to avoid composite index requirements on Firestore
+    orders.sort((a,b) => new Date(b.date) - new Date(a.date));
+    callback(orders);
+  }, (error) => {
+    console.error("Error subscribiendo a Firebase en tiempo real: ", error);
+  });
 };
 
 export const getOrders = async () => {
@@ -100,4 +131,37 @@ export const saveAdminPushToken = async (token) => {
     console.error("Error saving admin push token", error);
     return false;
   }
+};
+
+export const saveAppData = async (data) => {
+  try {
+    await setDoc(doc(db, "config", "appData"), data);
+    return true;
+  } catch (error) {
+    console.error("Error saving app data", error);
+    return false;
+  }
+};
+
+export const getAppData = async () => {
+  try {
+    const docSnap = await getDoc(doc(db, "config", "appData"));
+    if (docSnap.exists()) {
+      return docSnap.data();
+    }
+    return null;
+  } catch (error) {
+    console.error("Error fetching app data", error);
+    return null;
+  }
+};
+
+export const subscribeToAppData = (callback) => {
+  return onSnapshot(doc(db, "config", "appData"), (docSnap) => {
+    if (docSnap.exists()) {
+      callback(docSnap.data());
+    } else {
+      callback(null);
+    }
+  });
 };

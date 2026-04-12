@@ -1,23 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Save, Trash2, Download } from 'lucide-react-native';
+import { Save, Trash2, Download, Plus, X, ChevronRight, ChevronDown } from 'lucide-react-native';
+import { REGIONES, CURSOS, COLEGIOS_REALES } from '../constants/chileData';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
-import * as XLSX from 'xlsx-js-style';
-import { getOrders, deleteOrder, saveAdminSizes, getAdminSizes, saveAdminPushToken } from '../services/firebaseOrderService';
+import * as XLSX from 'xlsx';
+import { getOrders, deleteOrder, saveAdminSizes, getAdminSizes, saveAdminPushToken, subscribeToOrders, saveAppData, getAppData, subscribeToAppData } from '../services/firebaseOrderService';
 import { auth } from '../services/firebaseConfig';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-});
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+    }),
+  });
+}
 
 const SIZES = ['16', 'S', 'M', 'L', 'XL'];
 
@@ -54,20 +57,54 @@ export default function AdminScreen() {
   const [orders, setOrders] = useState([]);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
 
+  // App Config States
+  const [appData, setAppData] = useState({
+    schools: COLEGIOS_REALES,
+    courses: CURSOS,
+    regions: REGIONES
+  });
+  const [newItemName, setNewItemName] = useState('');
+  const [selectedRegionIdx, setSelectedRegionIdx] = useState(null);
+  const [isSavingAppData, setIsSavingAppData] = useState(false);
+
   useEffect(() => {
+    let unsubscribeOrders = null;
+
     if (isAuthenticated) {
       loadMeasurements();
-      loadOrders();
+
+      // Load and sync App Config
+      subscribeToAppData((data) => {
+        if (data) {
+          setAppData(data);
+        } else {
+          // Initialize with defaults if empty
+          saveAppData({
+            schools: COLEGIOS_REALES,
+            courses: CURSOS,
+            regions: REGIONES
+          });
+        }
+      });
+
+      setIsLoadingOrders(true);
+      unsubscribeOrders = subscribeToOrders((data) => {
+        setOrders(data);
+        setIsLoadingOrders(false);
+      });
+
       registerForPushNotificationsAsync().then(token => {
         if (token) saveAdminPushToken(token);
       });
     }
+
+    return () => {
+      if (unsubscribeOrders) unsubscribeOrders();
+    };
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (activeTab === 'pedidos') {
-      loadOrders();
-    }
+    // onSnapshot is handling updates, no need to reload manually
   }, [activeTab]);
 
   async function registerForPushNotificationsAsync() {
@@ -104,10 +141,7 @@ export default function AdminScreen() {
   };
 
   const loadOrders = async () => {
-    setIsLoadingOrders(true);
-    const data = await getOrders();
-    setOrders(data);
-    setIsLoadingOrders(false);
+    // Deprecated for direct load; handled by subscribeToOrders now
   };
 
   const exportToExcel = async (customOrders = null, fileName = 'Todos_los_Pedidos') => {
@@ -136,7 +170,7 @@ export default function AdminScreen() {
       const formattedData = sortedExport.map(o => {
         const p = o.personalInfo || {};
         return {
-          'Nombre del Alumno': p.nombre || '',
+          'Nombre del Alumno': `${p.nombre || ''} ${p.apellido || ''}`.trim(),
           'Colegio': p.colegio || '',
           'Region': p.region || '',
           'Ciudad': p.ciudad || '',
@@ -150,15 +184,15 @@ export default function AdminScreen() {
       const range = XLSX.utils.decode_range(ws['!ref']);
       for (let R = range.s.r; R <= range.e.r; ++R) {
         for (let C = range.s.c; C <= range.e.c; ++C) {
-          const cell_address = {c:C, r:R};
+          const cell_address = { c: C, r: R };
           const cell_ref = XLSX.utils.encode_cell(cell_address);
           if (!ws[cell_ref]) ws[cell_ref] = { t: "s", v: "" };
           ws[cell_ref].s = {
             border: {
-              top: {style: "thin", color: {rgb: "000000"}},
-              bottom: {style: "thin", color: {rgb: "000000"}},
-              left: {style: "thin", color: {rgb: "000000"}},
-              right: {style: "thin", color: {rgb: "000000"}}
+              top: { style: "thin", color: { rgb: "000000" } },
+              bottom: { style: "thin", color: { rgb: "000000" } },
+              left: { style: "thin", color: { rgb: "000000" } },
+              right: { style: "thin", color: { rgb: "000000" } }
             },
             font: R === 0 ? { bold: true } : {}
           };
@@ -216,8 +250,7 @@ export default function AdminScreen() {
       { text: 'Cancelar', style: 'cancel' },
       {
         text: 'Borrar', style: 'destructive', onPress: async () => {
-          const success = await deleteOrder(id);
-          if (success) loadOrders();
+          await deleteOrder(id);
         }
       }
     ]);
@@ -242,14 +275,31 @@ export default function AdminScreen() {
   };
 
   const updateMeasurement = (size, field, value) => {
-    setMeasurements(prev => ({ ...prev, [size]: { ...prev[size], [field]: value } }));
+    setMeasurements(prev => ({ ...prev, [size]: { ...prev[size], [field]: value.replace(/[^0-9.,]/g, '') } }));
   };
 
   const saveSettings = async () => {
+    let isValid = true;
+    for (const size of SIZES) {
+      const p = parseFloat(String(measurements[size].pecho).replace(',', '.'));
+      const l = parseFloat(String(measurements[size].largo).replace(',', '.'));
+      const m = parseFloat(String(measurements[size].manga).replace(',', '.'));
+
+      if (isNaN(p) || p <= 0 || isNaN(l) || l <= 0 || isNaN(m) || m <= 0) {
+        isValid = false;
+        break;
+      }
+    }
+
+    if (!isValid) {
+      Alert.alert('Medidas Inválidas', 'Todas las medidas deben ser numéricas y mayores a 0. Verifica no haber dejado campos vacíos ni letras.');
+      return;
+    }
+
     setIsSaving(true);
     try {
       await saveAdminSizes(measurements);
-      Alert.alert('Éxito', 'Las medidas predeterminadas han sido guardadas en Firebase.');
+      Alert.alert('Éxito', 'Las medidas predeterminadas han sido guardadas.');
     } catch (e) {
       console.error(e);
       Alert.alert('Error', 'No se pudieron guardar las medidas.');
@@ -269,6 +319,72 @@ export default function AdminScreen() {
     return (pA.nombre || '').localeCompare(pB.nombre || '');
   });
 
+  const handleAddSchool = async () => {
+    if (!newItemName.trim()) return;
+    const updated = { ...appData, schools: [newItemName.trim(), ...appData.schools] };
+    setAppData(updated);
+    setNewItemName('');
+    await saveAppData(updated);
+  };
+
+  const handleRemoveSchool = async (index) => {
+    const updated = { ...appData, schools: appData.schools.filter((_, i) => i !== index) };
+    setAppData(updated);
+    await saveAppData(updated);
+  };
+
+  const handleAddCourse = async () => {
+    if (!newItemName.trim()) return;
+    const updated = { ...appData, courses: [...appData.courses, newItemName.trim()] };
+    setAppData(updated);
+    setNewItemName('');
+    await saveAppData(updated);
+  };
+
+  const handleRemoveCourse = async (index) => {
+    const updated = { ...appData, courses: appData.courses.filter((_, i) => i !== index) };
+    setAppData(updated);
+    await saveAppData(updated);
+  };
+
+  const handleAddRegion = async () => {
+    if (!newItemName.trim()) return;
+    const updated = { ...appData, regions: [...appData.regions, { id: Date.now(), nombre: newItemName.trim(), comunas: [] }] };
+    setAppData(updated);
+    setNewItemName('');
+    await saveAppData(updated);
+  };
+
+  const handleRemoveRegion = async (id) => {
+    const updated = { ...appData, regions: appData.regions.filter(r => r.id !== id) };
+    setAppData(updated);
+    await saveAppData(updated);
+  };
+
+  const handleAddCommune = async (regionId) => {
+    if (!newItemName.trim()) return;
+    const updated = {
+      ...appData,
+      regions: appData.regions.map(r =>
+        r.id === regionId ? { ...r, comunas: [...r.comunas, newItemName.trim()] } : r
+      )
+    };
+    setAppData(updated);
+    setNewItemName('');
+    await saveAppData(updated);
+  };
+
+  const handleRemoveCommune = async (regionId, communeName) => {
+    const updated = {
+      ...appData,
+      regions: appData.regions.map(r =>
+        r.id === regionId ? { ...r, comunas: r.comunas.filter(c => c !== communeName) } : r
+      )
+    };
+    setAppData(updated);
+    await saveAppData(updated);
+  };
+
   if (isCheckingAuth) {
     return (
       <View style={[styles.loginContainer, { justifyContent: 'center', alignItems: 'center' }]}>
@@ -280,7 +396,7 @@ export default function AdminScreen() {
   if (!isAuthenticated) {
     return (
       <View style={styles.loginContainer}>
-        <Text style={styles.loginTitle}>Bóveda Firebase</Text>
+        <Text style={styles.loginTitle}>Cofiguracion de Tallas</Text>
         <Text style={styles.loginSubtitle}>Inicia sesión con tu cuenta de administrador (Auth) para desencriptar los pedidos.</Text>
 
         <TextInput
@@ -313,8 +429,11 @@ export default function AdminScreen() {
         <TouchableOpacity style={[styles.tab, activeTab === 'tallas' && styles.activeTab]} onPress={() => setActiveTab('tallas')}>
           <Text style={[styles.tabText, activeTab === 'tallas' && styles.activeTabText]}>Cfg. Tallas</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[styles.tab, activeTab === 'configApp' && styles.activeTab]} onPress={() => setActiveTab('configApp')}>
+          <Text style={[styles.tabText, activeTab === 'configApp' && styles.activeTabText]}>Cfg. App</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={[styles.tab, activeTab === 'pedidos' && styles.activeTab]} onPress={() => setActiveTab('pedidos')}>
-          <Text style={[styles.tabText, activeTab === 'pedidos' && styles.activeTabText]}>Ver Pedidos ({orders.length})</Text>
+          <Text style={[styles.tabText, activeTab === 'pedidos' && styles.activeTabText]}>Pedidos ({orders.length})</Text>
         </TouchableOpacity>
       </View>
 
@@ -337,17 +456,17 @@ export default function AdminScreen() {
                 <View style={styles.inputsRow}>
                   <View style={styles.inputGroup}>
                     <Text style={styles.label}>Pecho (cm)</Text>
-                    <TextInput style={styles.input} keyboardType="numeric" value={measurements[size].pecho} onChangeText={(val) => updateMeasurement(size, 'pecho', val)} />
+                    <TextInput style={styles.input} keyboardType="numeric" value={String(measurements[size].pecho)} onChangeText={(val) => updateMeasurement(size, 'pecho', val)} />
                   </View>
                   <View style={styles.spacer} />
                   <View style={styles.inputGroup}>
                     <Text style={styles.label}>Largo (cm)</Text>
-                    <TextInput style={styles.input} keyboardType="numeric" value={measurements[size].largo} onChangeText={(val) => updateMeasurement(size, 'largo', val)} />
+                    <TextInput style={styles.input} keyboardType="numeric" value={String(measurements[size].largo)} onChangeText={(val) => updateMeasurement(size, 'largo', val)} />
                   </View>
                   <View style={styles.spacer} />
                   <View style={styles.inputGroup}>
                     <Text style={styles.label}>Mangas (cm)</Text>
-                    <TextInput style={styles.input} keyboardType="numeric" value={measurements[size].manga || ''} onChangeText={(val) => updateMeasurement(size, 'manga', val)} />
+                    <TextInput style={styles.input} keyboardType="numeric" value={String(measurements[size].manga || '')} onChangeText={(val) => updateMeasurement(size, 'manga', val)} />
                   </View>
                 </View>
               </View>
@@ -359,12 +478,121 @@ export default function AdminScreen() {
               {isSaving ? <ActivityIndicator color="#fff" /> : (
                 <>
                   <Save color="#fff" size={20} style={{ marginRight: 8 }} />
-                  <Text style={styles.saveButtonText}>Guardar Pedido</Text>
+                  <Text style={styles.saveButtonText}>Guardar Medidas</Text>
                 </>
               )}
             </TouchableOpacity>
           </View>
         </>
+      ) : activeTab === 'configApp' ? (
+        <ScrollView contentContainerStyle={styles.content}>
+          <Text style={styles.headerSubtitle}>Gestiona las opciones que los alumnos ven al registrarse.</Text>
+
+          {/* COLEGIOS */}
+          <View style={styles.configCard}>
+            <Text style={styles.configTitle}>🏫 Colegios</Text>
+            <View style={styles.addInputRow}>
+              <TextInput
+                style={[styles.input, { flex: 1, marginRight: 8 }]}
+                placeholder="Añadir Colegio..."
+                placeholderTextColor="#6B7280"
+                value={activeTab === 'configApp' && selectedRegionIdx === null ? newItemName : ''}
+                onChangeText={setNewItemName}
+              />
+              <TouchableOpacity style={styles.addButton} onPress={handleAddSchool}>
+                <Plus color="#fff" size={24} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.listContainer}>
+              {appData.schools.slice(0, 10).map((school, i) => (
+                <View key={i} style={styles.listItem}>
+                  <Text style={styles.listItemText}>{school}</Text>
+                  <TouchableOpacity onPress={() => handleRemoveSchool(i)}><X color="#EF4444" size={20} /></TouchableOpacity>
+                </View>
+              ))}
+              {appData.schools.length > 10 && <Text style={styles.moreItemsText}>+ {appData.schools.length - 10} colegios más...</Text>}
+            </View>
+          </View>
+
+          {/* CURSOS */}
+          <View style={styles.configCard}>
+            <Text style={styles.configTitle}>📚 Cursos</Text>
+            <View style={styles.addInputRow}>
+              <TextInput
+                style={[styles.input, { flex: 1, marginRight: 8 }]}
+                placeholder="Añadir Curso (Ej: 4° H)..."
+                placeholderTextColor="#6B7280"
+                value={activeTab === 'configApp' && selectedRegionIdx === 'course' ? newItemName : ''}
+                onFocus={() => setSelectedRegionIdx('course')}
+                onChangeText={setNewItemName}
+              />
+              <TouchableOpacity style={styles.addButton} onPress={handleAddCourse}>
+                <Plus color="#fff" size={24} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.tagsContainer}>
+              {appData.courses.map((curso, i) => (
+                <View key={i} style={styles.tag}>
+                  <Text style={styles.tagText}>{curso}</Text>
+                  <TouchableOpacity onPress={() => handleRemoveCourse(i)}><X color="#fff" size={14} style={{ marginLeft: 4 }} /></TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {/* REGIONES Y COMUNAS */}
+          <View style={styles.configCard}>
+            <Text style={styles.configTitle}>📍 Regiones y Comunas</Text>
+            <View style={styles.addInputRow}>
+              <TextInput
+                style={[styles.input, { flex: 1, marginRight: 8 }]}
+                placeholder="Añadir Región..."
+                placeholderTextColor="#6B7280"
+                value={activeTab === 'configApp' && selectedRegionIdx === 'region' ? newItemName : ''}
+                onFocus={() => setSelectedRegionIdx('region')}
+                onChangeText={setNewItemName}
+              />
+              <TouchableOpacity style={styles.addButton} onPress={handleAddRegion}>
+                <Plus color="#fff" size={24} />
+              </TouchableOpacity>
+            </View>
+            {appData.regions.map((region, idx) => (
+              <View key={region.id} style={styles.regionItem}>
+                <View style={styles.regionHeader}>
+                  <TouchableOpacity style={styles.regionTitleWrapper} onPress={() => setSelectedRegionIdx(selectedRegionIdx === idx ? null : idx)}>
+                    {selectedRegionIdx === idx ? <ChevronDown color="#9CA3AF" size={20} /> : <ChevronRight color="#9CA3AF" size={20} />}
+                    <Text style={styles.regionName}>{region.nombre}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleRemoveRegion(region.id)}><X color="#EF4444" size={18} /></TouchableOpacity>
+                </View>
+                {selectedRegionIdx === idx && (
+                  <View style={styles.communeContainer}>
+                    <View style={styles.addCommuneRow}>
+                      <TextInput
+                        style={[styles.input, { flex: 1, marginRight: 8, paddingVertical: 6 }]}
+                        placeholder="Añadir Comuna..."
+                        placeholderTextColor="#6B7280"
+                        value={activeTab === 'configApp' && selectedRegionIdx === idx ? newItemName : ''}
+                        onChangeText={setNewItemName}
+                      />
+                      <TouchableOpacity style={[styles.addButton, { paddingHorizontal: 12 }]} onPress={() => handleAddCommune(region.id)}>
+                        <Plus color="#fff" size={18} />
+                      </TouchableOpacity>
+                    </View>
+                    <View style={styles.communeList}>
+                      {region.comunas.map((com, ci) => (
+                        <View key={ci} style={styles.communeItem}>
+                          <Text style={styles.communeText}>{com}</Text>
+                          <TouchableOpacity onPress={() => handleRemoveCommune(region.id, com)}><X color="#6B7280" size={16} /></TouchableOpacity>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+              </View>
+            ))}
+          </View>
+        </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={styles.ordersContent}>
           {orders.length > 0 && (
@@ -403,24 +631,33 @@ export default function AdminScreen() {
                     </View>
                   )}
                   {showColegio && (
-                    <View style={styles.sectionHeaderColegio}>
-                      <Text style={styles.sectionHeaderTextColegio}>🏫 Colegio: {curr.colegio || 'Sin Especificar'}</Text>
-                      <TouchableOpacity onPress={() => {
-                        const schoolFileName = `Pedidos_Colegio_${curr.colegio || 'General'}`;
-                        exportToExcel(orders.filter(o => o.personalInfo?.colegio === curr.colegio && o.personalInfo?.region === curr.region && o.personalInfo?.ciudad === curr.ciudad), schoolFileName);
-                      }}>
-                        <Download color="#fff" size={20} />
+                    <View style={[styles.sectionHeaderColegio, { flexDirection: 'column', alignItems: 'stretch' }]}>
+                      <Text style={[styles.sectionHeaderTextColegio, { marginBottom: 8 }]}>🏫 Colegio: {curr.colegio || 'Sin Especificar'}</Text>
+                      <TouchableOpacity
+                        style={{ backgroundColor: '#10B981', borderRadius: 8, padding: 10, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}
+                        onPress={() => {
+                          const baseName = (curr.colegio || 'General').replace(/\s+/g, '_');
+                          const schoolFileName = `Pedidos_Colegio_${baseName}`;
+                          exportToExcel(orders.filter(o => o.personalInfo?.colegio === curr.colegio && o.personalInfo?.region === curr.region && o.personalInfo?.ciudad === curr.ciudad), schoolFileName);
+                        }}>
+                        <Download color="#fff" size={18} style={{ marginRight: 8 }} />
+                        <Text style={{ color: '#fff', fontWeight: 'bold' }}>Descargar Excel (Solo este Colegio)</Text>
                       </TouchableOpacity>
                     </View>
                   )}
                   {showCurso && (
-                    <View style={styles.sectionHeaderCurso}>
-                      <Text style={styles.sectionHeaderTextCurso}>📚 Curso: {curr.curso || 'Sin Especificar'}</Text>
-                      <TouchableOpacity onPress={() => {
-                        const courseFileName = `Pedidos_Colegio_${curr.colegio || 'General'}_Curso_${curr.curso || 'Extra'}`;
-                        exportToExcel(orders.filter(o => o.personalInfo?.curso === curr.curso && o.personalInfo?.colegio === curr.colegio), courseFileName);
-                      }}>
-                        <Download color="#9CA3AF" size={18} />
+                    <View style={[styles.sectionHeaderCurso, { flexDirection: 'column', alignItems: 'stretch' }]}>
+                      <Text style={[styles.sectionHeaderTextCurso, { marginBottom: 8 }]}>📚 Curso: {curr.curso || 'Sin Especificar'}</Text>
+                      <TouchableOpacity
+                        style={{ backgroundColor: '#374151', borderRadius: 8, padding: 8, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#4B5563' }}
+                        onPress={() => {
+                          const baseCol = (curr.colegio || 'General').replace(/\s+/g, '_');
+                          const baseCur = (curr.curso || 'Extra').replace(/\s+/g, '_');
+                          const courseFileName = `Pedidos_${baseCol}_Curso_${baseCur}`;
+                          exportToExcel(orders.filter(o => o.personalInfo?.curso === curr.curso && o.personalInfo?.colegio === curr.colegio), courseFileName);
+                        }}>
+                        <Download color="#E5E7EB" size={16} style={{ marginRight: 8 }} />
+                        <Text style={{ color: '#E5E7EB', fontWeight: '600', fontSize: 13 }}>Descargar Excel (Solo este Curso)</Text>
                       </TouchableOpacity>
                     </View>
                   )}
@@ -431,7 +668,7 @@ export default function AdminScreen() {
                         <Text style={styles.orderUserLetter}>{(curr.nombre || 'A').charAt(0).toUpperCase()}</Text>
                       </View>
                       <View style={styles.orderUserTexts}>
-                        <Text style={styles.orderName}>{curr.nombre || 'Sin Nombre'}</Text>
+                        <Text style={styles.orderName}>{curr.nombre || 'Sin Nombre'} {curr.apellido || ''}</Text>
                         <Text style={styles.orderDate}>{dateObj.toLocaleDateString()} {dateObj.toLocaleTimeString()}</Text>
                       </View>
                       <TouchableOpacity style={styles.deleteOrderBtn} onPress={() => handleDeleteOrder(order.id)}>
@@ -525,4 +762,24 @@ const styles = StyleSheet.create({
   loginInput: { backgroundColor: '#1F2937', borderWidth: 1, borderColor: '#374151', borderRadius: 12, padding: 16, color: '#F9FAFB', fontSize: 16, marginBottom: 24 },
   loginButton: { backgroundColor: '#3B82F6', paddingVertical: 16, borderRadius: 12, alignItems: 'center' },
   loginButtonText: { color: '#ffffff', fontSize: 16, fontWeight: 'bold' },
+  configCard: { backgroundColor: '#1F2937', borderRadius: 16, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: '#374151' },
+  configTitle: { color: '#E5E7EB', fontSize: 18, fontWeight: 'bold', marginBottom: 16 },
+  addInputRow: { flexDirection: 'row', marginBottom: 16 },
+  addButton: { backgroundColor: '#3B82F6', borderRadius: 8, paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center' },
+  listContainer: { backgroundColor: '#111827', borderRadius: 12, overflow: 'hidden' },
+  listItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12, borderBottomWidth: 1, borderBottomColor: '#1F2937' },
+  listItemText: { color: '#D1D5DB', fontSize: 14 },
+  moreItemsText: { color: '#6B7280', fontSize: 12, padding: 12, textAlign: 'center' },
+  tagsContainer: { flexDirection: 'row', flexWrap: 'wrap' },
+  tag: { backgroundColor: '#3B82F6', borderRadius: 20, paddingHorizontal: 12, paddingVertical: 6, flexDirection: 'row', alignItems: 'center', marginRight: 8, marginBottom: 8 },
+  tagText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  regionItem: { marginBottom: 8, borderBottomWidth: 1, borderBottomColor: '#1F2937' },
+  regionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12 },
+  regionTitleWrapper: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+  regionName: { color: '#F9FAFB', fontSize: 15, marginLeft: 8 },
+  communeContainer: { backgroundColor: '#111827', padding: 12, borderRadius: 12, marginBottom: 12 },
+  addCommuneRow: { flexDirection: 'row', marginBottom: 12 },
+  communeList: { flexDirection: 'row', flexWrap: 'wrap' },
+  communeItem: { backgroundColor: '#1F2937', borderWidth: 1, borderColor: '#374151', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', marginRight: 6, marginBottom: 6 },
+  communeText: { color: '#9CA3AF', fontSize: 12, marginRight: 4 }
 });

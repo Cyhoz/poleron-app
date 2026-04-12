@@ -1,0 +1,82 @@
+[
+  {
+    "rbd": 1,
+    "nombre": "INSTITUTO NACIONAL GENERAL JOSE MIGUEL CARRERA",
+    "comuna": "SANTIAGO",
+    "direccion": "ARTURO PRAT 33",
+    "region": "METROPOLITANA",
+    "dependencia": "MUNICIPAL"
+  },
+  {
+    "rbd": 2,
+    "nombre": "LICEO 1 JAVIERA CARRERA",
+    "comuna": "SANTIAGO",
+    "direccion": "COMPAÑIA 1484",
+    "region": "METROPOLITANA",
+    "dependencia": "MUNICIPAL"
+  },
+  {
+    "rbd": 3,
+    "nombre": "LICEO DE APLICACION",
+    "comuna": "SANTIAGO",
+    "direccion": "AV. RICARDO CUMMING 21",
+    "region": "METROPOLITANA",
+    "dependencia": "MUNICIPAL"
+  },
+  {
+    "rbd": 4,
+    "nombre": "LICEO MANUEL BARROS BORGOÑO",
+    "comuna": "SANTIAGO",
+    "direccion": "SAN DIEGO 1547",
+    "region": "METROPOLITANA",
+    "dependencia": "MUNICIPAL"
+  },
+  {
+    "rbd": 5,
+    "nombre": "COLEGIO SAGRADOS CORAZONES (ALAMEDA)",
+    "comuna": "SANTIAGO",
+    "direccion": "AV. LIBERTADOR BERNARDO O'HIGGINS 2062",
+    "region": "METROPOLITANA",
+    "dependencia": "PARTICULAR SUBVENCIONADO"
+  },
+  {
+    "rbd": 2496,
+    "nombre": "LICEO ABATE MOLINA",
+    "comuna": "TALCA",
+    "direccion": "4 NORTE 1267",
+    "region": "MAULE",
+    "dependencia": "MUNICIPAL"
+  },
+  {
+    "rbd": 218,
+    "nombre": "LICEO EDUARDO DE LA BARRA",
+    "comuna": "VALPARAISO",
+    "direccion": "AV. COLON 2184",
+    "region": "VALPARAISO",
+    "dependencia": "MUNICIPAL"
+  },
+  {
+    "rbd": 9277,
+    "nombre": "COLEGIO ST. GEORGE'S COLLEGE",
+    "comuna": "VITACURA",
+    "direccion": "AV. AMERICO VESPUCIO 5400",
+    "region": "METROPOLITANA",
+    "dependencia": "PARTICULAR PAGADO"
+  },
+  {
+    "rbd": 9425,
+    "nombre": "COLEGIO EVEREST",
+    "comuna": "LO BARNECHEA",
+    "direccion": "AV. CAMINO LA DEHESA 2500",
+    "region": "METROPOLITANA",
+    "dependencia": "PARTICULAR PAGADO"
+  },
+  {
+    "rbd": 8507,
+    "nombre": "COLEGIO SAN IGNACIO",
+    "comuna": "SANTIAGO",
+    "direccion": "ALONSO OVALLE 1452",
+    "region": "METROPOLITANA",
+    "dependencia": "PARTICULAR PAGADO"
+  }
+]
