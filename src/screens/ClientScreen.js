@@ -4,6 +4,7 @@ import { REGIONES, CURSOS, COLEGIOS_REALES } from '../constants/chileData';
 import { saveOrder, getAdminSizes, checkExistingOrder, subscribeToAppData, saveAppData } from '../services/firebaseOrderService';
 
 const SIZES = ['16', 'S', 'M', 'L', 'XL'];
+const API_BASE_URL = 'https://poleron-app-2.onrender.com';
 
 export default function ClientScreen() {
   const [measurements, setMeasurements] = useState({
@@ -120,12 +121,15 @@ export default function ClientScreen() {
     const filtered = text.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s.-]/g, '');
     setSchoolSearch(filtered);
     updatePersonalInfo('colegio', filtered);
-    if (text.length > 1) {
-      const filtered = appData.schools.filter(s => 
-        s.toLowerCase().includes(text.toLowerCase())
-      );
-      setFilteredSchools(filtered);
-      setShowSchoolResults(true);
+    if (text.length > 2) {
+      // Búsqueda en el servidor (Render) para acceder a los 12,000+ colegios reales
+      fetch(`${API_BASE_URL}/api/schools?query=${text}&limit=10`)
+        .then(res => res.json())
+        .then(data => {
+          setFilteredSchools(data.map(s => s.nombre));
+          setShowSchoolResults(true);
+        })
+        .catch(err => console.error('Error buscando colegios:', err));
     } else {
       setShowSchoolResults(false);
     }
@@ -212,10 +216,9 @@ export default function ClientScreen() {
     const regexLetras = /^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]+$/;
     if (!regexLetras.test(n)) return false;
 
-    // Validación avanzada contra base de datos de nombres reales
+    // Validación avanzada contra base de datos de nombres reales en Render
     try {
-      // Nota: Reemplazar 'localhost' por la IP de tu servidor si pruebas en un dispositivo real
-      const response = await fetch(`http://localhost:3000/api/validate-name?name=${n}`);
+      const response = await fetch(`${API_BASE_URL}/api/validate-name?name=${n}`);
       const data = await response.json();
       return data.isValid;
     } catch (err) {
