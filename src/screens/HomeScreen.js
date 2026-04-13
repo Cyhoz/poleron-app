@@ -1,19 +1,47 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Dimensions, Image } from 'react-native';
-import { Ruler, Settings } from 'lucide-react-native';
+import { Ruler, Settings, LogOut, User } from 'lucide-react-native';
+import { auth } from '../services/firebaseConfig';
+import { signOut } from 'firebase/auth';
 
 const { width } = Dimensions.get('window');
 
 export default function HomeScreen({ navigation }) {
+  const user = auth.currentUser;
+
+  const handleAuthPress = () => {
+    if (user) {
+        Alert.alert(
+            'Cerrar Sesión',
+            '¿Estás seguro de que quieres salir?',
+            [
+                { text: 'Cancelar', style: 'cancel' },
+                { text: 'Salir', onPress: () => signOut(auth) }
+            ]
+        );
+    } else {
+        navigation.navigate('Auth');
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
-      <TouchableOpacity 
-        style={styles.adminButton} 
-        onPress={() => navigation.navigate('Admin')}
-        activeOpacity={0.7}
-      >
-        <Settings color="#9CA3AF" size={24} />
-      </TouchableOpacity>
+      <View style={styles.topBar}>
+          <TouchableOpacity 
+            style={styles.circleBtn} 
+            onPress={handleAuthPress}
+          >
+            {user ? <LogOut color="#EF4444" size={22} /> : <User color="#9CA3AF" size={22} />}
+          </TouchableOpacity>
+
+          <TouchableOpacity 
+            style={styles.circleBtn} 
+            onPress={() => navigation.navigate('Admin')}
+            activeOpacity={0.7}
+          >
+            <Settings color="#9CA3AF" size={22} />
+          </TouchableOpacity>
+      </View>
 
       <View style={styles.content}>
         <View style={styles.iconContainer}>
@@ -46,12 +74,23 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#111827',
   },
-  adminButton: {
-    position: 'absolute',
-    top: 50,
-    right: 20,
-    padding: 10,
-    zIndex: 10,
+  topBar: {
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    width: '100%'
+  },
+  circleBtn: {
+    backgroundColor: '#1F2937',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 12,
+    borderWidth: 1,
+    borderColor: '#374151'
   },
   content: {
     flex: 1,

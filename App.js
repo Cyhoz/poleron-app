@@ -11,14 +11,18 @@ SplashScreen.preventAutoHideAsync();
 import HomeScreen from './src/screens/HomeScreen';
 import AdminScreen from './src/screens/AdminScreen';
 import ClientScreen from './src/screens/ClientScreen';
+import AuthScreen from './src/screens/AuthScreen';
+import { auth } from './src/services/firebaseConfig';
+import { onAuthStateChanged } from 'firebase/auth';
 
 const Stack = createNativeStackNavigator();
 
 export default function App() {
+  const [user, setUser] = React.useState(null);
+
   React.useEffect(() => {
     async function prepare() {
       try {
-        // Keep splash screen visible for a bit to ensure everything is loaded
         await new Promise(resolve => setTimeout(resolve, 1500));
       } catch (e) {
         console.warn(e);
@@ -31,6 +35,12 @@ export default function App() {
       }
     }
     prepare();
+
+    const unsubscribe = onAuthStateChanged(auth, (currUser) => {
+        setUser(currUser);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   return (
@@ -49,6 +59,11 @@ export default function App() {
             name="Home" 
             component={HomeScreen} 
             options={{ title: 'Inicio', headerShown: false }} 
+          />
+          <Stack.Screen 
+            name="Auth" 
+            component={AuthScreen} 
+            options={{ title: 'Acceso Alumnos', headerShown: false }} 
           />
           <Stack.Screen 
             name="Client" 

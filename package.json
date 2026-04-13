@@ -9,7 +9,8 @@
     "web": "set NODE_OPTIONS=--no-experimental-strip-types && expo start --web",
     "build-apk": "set NODE_OPTIONS=--no-experimental-strip-types && eas build -p android --profile preview",
     "local-apk": "cd android && gradlew.bat assembleRelease",
-    "local-apk-full": "scripts/build-full-apk.bat"
+    "local-apk-full": "scripts/build-full-apk.bat",
+    "build-aab": "cd android && gradlew.bat bundleRelease"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
@@ -25,6 +26,7 @@
     "expo-device": "~7.0.3",
     "expo-file-system": "~18.0.7",
     "expo-font": "~13.0.4",
+    "expo-image-picker": "~16.0.6",
     "expo-notifications": "~0.29.14",
     "expo-sharing": "~13.0.1",
     "expo-splash-screen": "~0.29.24",

@@ -3,30 +3,34 @@ import {
   View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, 
   Alert, ActivityIndicator, Vibration, Platform, Modal, FlatList, Image 
 } from 'react-native';
+import { Image as ImageIcon, UploadCloud, X } from 'lucide-react-native';
+import * as ImagePicker from 'expo-image-picker';
 import { WebView } from 'react-native-webview';
 import { REGIONES, CURSOS, COLEGIOS_REALES } from '../constants/chileData';
 import { 
   saveOrder, getAdminSizes, checkExistingOrder, subscribeToAppData, 
   getProducts, initiatePayment 
 } from '../services/firebaseOrderService';
+import { auth } from '../services/firebaseConfig';
 
 const SIZES = ['16', 'S', 'M', 'L', 'XL'];
 const API_BASE_URL = 'https://poleron-app-2.onrender.com';
 
-export default function ClientScreen() {
+export default function ClientScreen({ navigation }) {
   const [step, setStep] = useState(0); // 0: Catalog, 1: Measurements, 2: Info/Payment
   const [products, setProducts] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   
   const [measurements, setMeasurements] = useState({ pecho: '', largo: '', manga: '' });
-  const [personalInfo, setPersonalInfo] = useState({
     nombre: '', apellido: '', colegio: '', curso: '', apodo: '', 
-    region: '', ciudad: '', comuna: '', pais: 'Chile', rut: '',
+    region: '', ciudad: '', comuna: '', pais: 'Chile',
   });
   const [quantity, setQuantity] = useState(6); // Default 6
 
   const [recommendedSize, setRecommendedSize] = useState(null);
   const [selectedSize, setSelectedSize] = useState('');
+  const [designImage, setDesignImage] = useState(null); // PNG model
+
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDone, setIsDone] = useState(false);
@@ -48,6 +52,13 @@ export default function ClientScreen() {
   const [adminSizes, setAdminSizes] = useState(null);
 
   useEffect(() => {
+    // Verificar si hay sesión
+    if (!auth.currentUser) {
+        Alert.alert('Sesión Requerida', 'Debes iniciar sesión para realizar un pedido.');
+        navigation.replace('Auth');
+        return;
+    }
+
     const initData = async () => {
         setIsLoading(true);
         const [prodList, sizes] = await Promise.all([getProducts(), getAdminSizes()]);
@@ -73,8 +84,6 @@ export default function ClientScreen() {
       filteredValue = value.replace(/[^a-zA-ZáéíóúÁÉÍÓÚñÑ\s]/g, '');
     } else if (field === 'colegio') {
       filteredValue = value.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s.-]/g, '');
-    } else if (field === 'rut') {
-      filteredValue = value.replace(/[^0-9kK]/g, '').toUpperCase();
     }
 
     setPersonalInfo(prev => {
@@ -124,10 +133,43 @@ export default function ClientScreen() {
     setStep(2);
   };
 
+  const pickDesign = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.7,
+        base64: true,
+    });
+
+    if (!result.canceled) {
+        setDesignImage(result.assets[0]);
+    }
+  };
+
   const startPayment = async () => {
-    const { nombre, apellido, rut } = personalInfo;
-    if (!nombre || !apellido || rut.length < 8) {
-        Alert.alert('Error', 'Completa tus datos antes de pagar.');
+    const { nombre, apellido } = personalInfo;
+    if (!nombre || !apellido || nombre.length < 2 || apellido.length < 2) {
+        Alert.alert('Error', 'Completa tus nombres reales antes de pagar.');
+        return;
+    }
+
+    setIsSubmitting(true);
+    const validName = await isRealName(nombre);
+    if (!validName) {
+        setIsSubmitting(false);
+        Alert.alert('Nombre Inválido', 'Por favor ingresa un nombre real (ej: Juan, María).');
+        return;
+    }
+    const validSurname = await isRealName(apellido);
+    if (!validSurname) {
+        setIsSubmitting(false);
+        Alert.alert('Apellido Inválido', 'Por favor ingresa un apellido real.');
+        return;
+    }
+
+    if (!designImage) {
+        Alert.alert('Diseño Requerido', 'Debes adjuntar el modelo (PNG/JPG) del polerón para continuar.');
         return;
     }
 
@@ -139,7 +181,7 @@ export default function ClientScreen() {
     setIsSubmitting(true);
     const totalAmount = selectedProduct.montoReserva * quantity;
     const buyOrder = "ORD-" + Math.floor(Math.random() * 100000);
-    const sessionId = "SESS-" + rut;
+    const sessionId = "SESS-" + Math.floor(Math.random() * 1000000);
     
     const response = await initiatePayment(totalAmount, buyOrder, sessionId);
     setIsSubmitting(false);
@@ -175,6 +217,9 @@ export default function ClientScreen() {
         producto: selectedProduct.nombre,
         cantidad: quantity,
         montoPagado: selectedProduct.montoReserva * quantity,
+        disenoBase64: designImage?.base64,
+        userId: auth.currentUser.uid, // Vincular el pedido al usuario logueado
+        userEmail: auth.currentUser.email,
         status: 'PAID'
     };
 
@@ -260,10 +305,23 @@ export default function ClientScreen() {
             </View>
           </View>
           
-          <View style={styles.inputGroupFull}>
-            <Text style={styles.label}>RUT</Text>
-            <TextInput style={styles.input} value={personalInfo.rut} onChangeText={v => updatePersonalInfo('rut', v)} placeholder="12345678-K" />
+          <View style={styles.imageUploadBox}>
+            <Text style={styles.label}>Modelo del Polerón (PNG):</Text>
+            {designImage ? (
+                <View style={styles.previewContainer}>
+                    <Image source={{ uri: designImage.uri }} style={styles.designPreview} />
+                    <TouchableOpacity style={styles.removeImgBtn} onPress={() => setDesignImage(null)}>
+                        <X color="#fff" size={16} />
+                    </TouchableOpacity>
+                </View>
+            ) : (
+                <TouchableOpacity style={styles.uploadBtn} onPress={pickDesign}>
+                    <UploadCloud color="#38BDF8" size={32} />
+                    <Text style={styles.uploadText}>Subir Modelo PNG</Text>
+                </TouchableOpacity>
+            )}
           </View>
+          
           <View style={styles.row}>
             <View style={{ flex: 1, marginRight: 5 }}>
                 <Text style={styles.label}>Nombre</Text>
@@ -340,4 +398,10 @@ const styles = StyleSheet.create({
   qBtn: { backgroundColor: '#3B82F6', width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
   qBtnText: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
   qValue: { color: '#fff', fontSize: 28, fontWeight: 'bold', marginHorizontal: 25 },
+  imageUploadBox: { marginBottom: 25, width: '100%', alignItems: 'center' },
+  uploadBtn: { width: '100%', height: 120, borderRadius: 16, borderStyle: 'dotted', borderWidth: 2, borderColor: '#334155', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0F172A' },
+  uploadText: { color: '#38BDF8', marginTop: 10, fontWeight: 'bold' },
+  previewContainer: { width: '100%', height: 200, borderRadius: 16, overflow: 'hidden' },
+  designPreview: { width: '100%', height: '100%', resizeMode: 'cover' },
+  removeImgBtn: { position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(239, 68, 68, 0.8)', padding: 8, borderRadius: 20 },
 });
