@@ -98,7 +98,6 @@ export default function ClientScreen() {
       // Letras, números y espacios (Colegios pueden tener números como "Escuela 143")
       // Pero sin símbolos raros como @, #, $, etc.
       filteredValue = value.replace(/[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑ\s.-]/g, '');
-    }
     } else if (field === 'rut') {
       // Limpiar RUT: quitar puntos y guiones, dejar números y K
       filteredValue = value.replace(/[^0-9kK]/g, '').toUpperCase();
