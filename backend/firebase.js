@@ -60,6 +60,11 @@ else {
                 }),
                 set: async (data) => { console.log(`Mock DB: Guardado ${id}`); return true; }
             }),
+            add: async (data) => { 
+                const mockId = Math.random().toString(36).substring(7);
+                console.log(`Mock DB: Añadido documento con ID ${mockId}`); 
+                return { id: mockId };
+            },
             where: (field, op, value) => db.collection(name), 
             limit: (num) => ({
                 get: async () => {
