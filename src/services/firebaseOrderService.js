@@ -18,8 +18,32 @@ export const saveOrder = async (orderData) => {
     if (!response.ok) throw new Error('Error en servidor seguro');
     const result = await response.json();
 
-    // Notificación Push para el administrador (opcional, se puede dejar en el backend también)
-    // Para mayor seguridad, el backend debería encargarse de las notificaciones
+    // Notificación Push para el administrador
+    try {
+      const adminDoc = await getDoc(doc(db, "config", "admin"));
+      if (adminDoc.exists()) {
+        const { pushToken } = adminDoc.data();
+        if (pushToken) {
+           await fetch('https://exp.host/--/api/v2/push/send', {
+              method: 'POST',
+              headers: {
+                Accept: 'application/json',
+                'Accept-encoding': 'gzip, deflate',
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                to: pushToken,
+                sound: 'default',
+                title: '🛒 ¡Nuevo Polerón Pedido!',
+                body: `${orderData.personalInfo.nombre} ${orderData.personalInfo.apellido || ''} de ${orderData.personalInfo.curso} ordenó talla ${orderData.tallaElegida}.`,
+                data: { orderId: result.id || 'new' },
+              }),
+            });
+        }
+      }
+    } catch (e) {
+      console.log('Error enviando notificación Push desde el cliente:', e);
+    }
     
     return true;
   } catch (error) {
@@ -146,6 +170,32 @@ export const subscribeToAppData = (callback) => {
       callback(null);
     }
   });
+};
+
+export const getProducts = async () => {
+    try {
+        const API_BASE_URL = 'https://poleron-app-2.onrender.com';
+        const response = await fetch(`${API_BASE_URL}/api/products`);
+        return await response.json();
+    } catch (error) {
+        console.error("Error fetching products", error);
+        return [];
+    }
+};
+
+export const initiatePayment = async (amount, buyOrder, sessionId) => {
+    try {
+        const API_BASE_URL = 'https://poleron-app-2.onrender.com';
+        const response = await fetch(`${API_BASE_URL}/api/pay/initiate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ amount, buyOrder, sessionId })
+        });
+        return await response.json();
+    } catch (error) {
+        console.error("Error initiating payment", error);
+        return null;
+    }
 };
 
 // --- Manejo de Nombres Autorizados ---

@@ -6,6 +6,7 @@ const dotenv = require('dotenv');
 const { db } = require('./firebase');
 const { encrypt, decrypt } = require('./utils/encryption');
 const axios = require('axios');
+const { tx } = require('./utils/webpay');
 
 dotenv.config();
 
@@ -203,6 +204,108 @@ app.get('/api/admin/orders', async (req, res) => {
     } catch (error) {
         console.error('Error al obtener pedidos para admin:', error);
         res.status(500).json({ error: 'No se pudieron recuperar los pedidos' });
+    }
+});
+
+/**
+ * GET /api/products
+ * Obtiene el catálogo de productos (ej: Polerón Base, Polerón Premium)
+ */
+app.get('/api/products', async (req, res) => {
+    try {
+        const snapshot = await db.collection('products').get();
+        const products = [];
+        snapshot.forEach(doc => products.push({ id: doc.id, ...doc.data() }));
+        
+        // Si no hay productos, devolvemos uno base
+        if (products.length === 0) {
+            return res.json([{
+                id: 'poleron-base',
+                nombre: 'Polerón Generación 2026',
+                precioTotal: 45000,
+                montoReserva: 15000,
+                descripcion: 'Polerón de algodón premium con bordado personalizado.'
+            }]);
+        }
+        res.json(products);
+    } catch (error) {
+        res.status(500).json({ error: 'Error al obtener productos' });
+    }
+});
+
+/**
+ * POST /api/pay/initiate
+ * Inicia una transacción de Webpay
+ */
+app.post('/api/pay/initiate', async (req, res) => {
+    try {
+        const { amount, buyOrder, sessionId } = req.body;
+        
+        // La URL a la que Transbank retornará al finalizar el pago
+        const returnUrl = `${req.protocol}://${req.get('host')}/api/pay/confirm`;
+
+        const response = await tx.create(buyOrder, sessionId, amount, returnUrl);
+        
+        // Guardamos el token en una colección temporal de transacciones pendientes
+        await db.collection('transactions').doc(response.token).set({
+            buyOrder,
+            sessionId,
+            amount,
+            status: 'INITIALIZED',
+            createdAt: new Date().toISOString()
+        });
+
+        res.json(response);
+    } catch (error) {
+        console.error('Error iniciando pago:', error);
+        res.status(500).json({ error: 'No se pudo iniciar la transacción' });
+    }
+});
+
+/**
+ * GET /api/pay/confirm
+ * Recibe el retorno de Transbank (vía redirección del browser)
+ */
+app.get('/api/pay/confirm', async (req, res) => {
+    const token = req.query.token_ws;
+    
+    if (!token) {
+        return res.send('<h1>Error de Pago</h1><p>No se recibió el token de la transacción.</p>');
+    }
+
+    try {
+        const result = await tx.commit(token);
+        
+        const txRef = db.collection('transactions').doc(token);
+        const txDoc = await txRef.get();
+        
+        if (result.response_code === 0) {
+            // Pago Exitoso
+            await txRef.update({ status: 'AUTHORIZED', result });
+            
+            // Aquí podrías actualizar el pedido original si tienes el ID
+            res.send(`
+                <div style="text-align:center; font-family: sans-serif; padding: 50px;">
+                    <h1 style="color: #10B981;">✅ Pago Exitoso</h1>
+                    <p>Monto: $${result.amount}</p>
+                    <p>Orden: ${result.buy_order}</p>
+                    <p>Puedes volver a la aplicación.</p>
+                </div>
+            `);
+        } else {
+            // Pago Fallido o Rechazado
+            await txRef.update({ status: 'FAILED', result });
+            res.send(`
+                <div style="text-align:center; font-family: sans-serif; padding: 50px;">
+                    <h1 style="color: #EF4444;">❌ Pago Rechazado</h1>
+                    <p>Código: ${result.response_code}</p>
+                    <p>Por favor intenta nuevamente desde la aplicación.</p>
+                </div>
+            `);
+        }
+    } catch (error) {
+        console.error('Error confirmando pago:', error);
+        res.status(500).send('Error interno al procesar el pago.');
     }
 });
 

@@ -8,6 +8,7 @@ import * as Sharing from 'expo-sharing';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as XLSX from 'xlsx';
+import Constants from 'expo-constants';
 import { getOrders, deleteOrder, saveAdminSizes, getAdminSizes, saveAdminPushToken, subscribeToOrders, saveAppData, getAppData, subscribeToAppData, saveValidName, deleteValidName, subscribeToValidNames } from '../services/firebaseOrderService';
 import { auth } from '../services/firebaseConfig';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
@@ -161,8 +162,14 @@ export default function AdminScreen() {
         return null; // Permissions not granted
       }
       try {
-        token = (await Notifications.getExpoPushTokenAsync()).data;
-      } catch (e) { console.log(e); }
+        const projectId = Constants?.expoConfig?.extra?.eas?.projectId || Constants?.easConfig?.projectId;
+        if (!projectId) {
+          console.error("Missing EAS Project ID. Push notifications will not work.");
+          return null;
+        }
+        token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+        console.log("Token de Notificación generado:", token);
+      } catch (e) { console.error("Error al obtener Expo Push Token:", e); }
     }
     return token;
   }
@@ -428,6 +435,41 @@ export default function AdminScreen() {
     await saveAppData(updated);
   };
 
+  const simulateNotification = async () => {
+    try {
+      const { status } = await Notifications.getPermissionsAsync();
+      if (status !== 'granted') {
+          Alert.alert('Permiso Denegado', 'Esta app no tiene permiso para mostrar notificaciones.');
+          return;
+      }
+
+      const projectId = Constants?.expoConfig?.extra?.eas?.projectId || Constants?.easConfig?.projectId;
+      const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+      
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: token,
+          title: '🛎️ ¡Prueba de Conexión!',
+          body: 'Si ves esto, las notificaciones están configuradas correctamente.',
+          sound: 'default',
+        }),
+      });
+
+      if (response.ok) {
+        Alert.alert('Prueba enviada', 'Deberías recibir una notificación en unos segundos.');
+      } else {
+        const error = await response.json();
+        console.error("Error de Expo API:", error);
+        Alert.alert('Error', 'No se pudo enviar la notificación a través de los servidores de Expo.');
+      }
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Error de Configuración', 'Hubo un error al intentar generar el token de prueba.');
+    }
+  };
+
   const handleAddValidName = async () => {
     if (!newValidName.trim()) return;
     const success = await saveValidName(newValidName);
@@ -504,6 +546,13 @@ export default function AdminScreen() {
           <Text style={[styles.tabText, activeTab === 'pedidos' && styles.activeTabText]}>Pedidos ({orders.length})</Text>
         </TouchableOpacity>
       </View>
+
+      <TouchableOpacity 
+        style={{ position: 'absolute', top: 12, right: 12, zIndex: 1000, backgroundColor: '#374151', padding: 8, borderRadius: 20 }}
+        onPress={simulateNotification}
+      >
+        <Text style={{ color: '#9CA3AF', fontSize: 10 }}>🔔 Probar</Text>
+      </TouchableOpacity>
 
       {activeTab === 'tallas' ? (
         <>
