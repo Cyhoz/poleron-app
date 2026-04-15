@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Save, Trash2, Download, Plus, X, ChevronRight, ChevronDown } from 'lucide-react-native';
@@ -9,9 +9,11 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as XLSX from 'xlsx';
 import Constants from 'expo-constants';
-import { getOrders, deleteOrder, saveAdminSizes, getAdminSizes, saveAdminPushToken, subscribeToOrders, saveAppData, getAppData, subscribeToAppData, saveValidName, deleteValidName, subscribeToValidNames } from '../services/firebaseOrderService';
-import { auth } from '../services/firebaseConfig';
+import { getOrders, deleteOrder, saveAdminSizes, getAdminSizes, saveAdminPushToken, subscribeToOrders, saveAppData, getAppData, subscribeToAppData, saveValidName, deleteValidName, subscribeToValidNames, getAllManagers } from '../services/firebaseOrderService';
+import { auth, db } from '../services/firebaseConfig';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
+import { getUserProfile } from '../services/firebaseOrderService';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 
 if (Platform.OS !== 'web') {
   Notifications.setNotificationHandler({
@@ -23,7 +25,7 @@ if (Platform.OS !== 'web') {
   });
 }
 
-const SIZES = ['16', 'S', 'M', 'L', 'XL'];
+// SIZES ya no será estático, se derivará de Object.keys(measurements)
 
 export default function AdminScreen() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -35,10 +37,40 @@ export default function AdminScreen() {
 
   const [activeTab, setActiveTab] = useState('tallas');
 
+  const notificationListener = useRef();
+  const responseListener = useRef();
+
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    // Escuchar notificaciones cuando la app está abierta (Primer Plano)
+    notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+      console.log("Notificación recibida en primer plano:", notification);
+      const title = notification.request.content.title;
+      const body = notification.request.content.body;
+      Alert.alert(title || 'Notificación', body || 'Nuevo mensaje recibido');
+    });
+
+    // Escuchar cuando el usuario pulsa en la notificación
+    responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+      console.log("Usuario pulsó la notificación:", response);
+      setActiveTab('pedidos');
+    });
+
+    return () => {
+      Notifications.removeNotificationSubscription(notificationListener.current);
+      Notifications.removeNotificationSubscription(responseListener.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
-        setIsAuthenticated(true);
+        const userProfile = await getUserProfile(user.uid);
+        if (userProfile?.role === 'admin' || user.email === 'inzunzajuan202@gmail.com') {
+          setIsAuthenticated(true);
+        } else {
+          setIsAuthenticated(false);
+          checkRememberedUser();
+        }
       } else {
         setIsAuthenticated(false);
         checkRememberedUser();
@@ -62,13 +94,8 @@ export default function AdminScreen() {
     } catch (e) { console.log(e); }
   };
 
-  const [measurements, setMeasurements] = useState({
-    '16': { pecho: '45', largo: '60', manga: '55' },
-    'S': { pecho: '50', largo: '65', manga: '60' },
-    'M': { pecho: '55', largo: '70', manga: '65' },
-    'L': { pecho: '60', largo: '75', manga: '70' },
-    'XL': { pecho: '65', largo: '80', manga: '75' },
-  });
+  const [measurements, setMeasurements] = useState({});
+  const [newSizeName, setNewSizeName] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
   const [orders, setOrders] = useState([]);
@@ -85,6 +112,11 @@ export default function AdminScreen() {
   const [isSavingAppData, setIsSavingAppData] = useState(false);
   const [validNames, setValidNames] = useState([]);
   const [newValidName, setNewValidName] = useState('');
+
+  // Managers State
+  const [managers, setManagers] = useState([]);
+  const [isLoadingManagers, setIsLoadingManagers] = useState(false);
+  const [managerFilters, setManagerFilters] = useState({ school: '', course: '' });
 
   useEffect(() => {
     let unsubscribeOrders = null;
@@ -119,6 +151,15 @@ export default function AdminScreen() {
       registerForPushNotificationsAsync().then(token => {
         if (token) saveAdminPushToken(token);
       });
+
+      // Cargar encargados inicialmente
+      const loadManagers = async () => {
+        setIsLoadingManagers(true);
+        const data = await getAllManagers();
+        setManagers(data);
+        setIsLoadingManagers(false);
+      };
+      loadManagers();
 
       // Sincronizar nombres válidos
       const unsubscribeNames = subscribeToValidNames((names) => {
@@ -162,21 +203,76 @@ export default function AdminScreen() {
         return null; // Permissions not granted
       }
       try {
-        const projectId = Constants?.expoConfig?.extra?.eas?.projectId || Constants?.easConfig?.projectId;
+        const projectId = Constants?.expoConfig?.extra?.eas?.projectId || Constants?.easConfig?.projectId || "c3f5b7d0-8b84-42fa-930e-45bb6d125037";
         if (!projectId) {
           console.error("Missing EAS Project ID. Push notifications will not work.");
           return null;
         }
         token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
         console.log("Token de Notificación generado:", token);
-      } catch (e) { console.error("Error al obtener Expo Push Token:", e); }
+      } catch (e) { 
+        console.error("Error al obtener Expo Push Token:", e);
+        // Intento final con el projectId hardcodeado por si acaso
+        try {
+          token = (await Notifications.getExpoPushTokenAsync({ projectId: "c3f5b7d0-8b84-42fa-930e-45bb6d125037" })).data;
+        } catch (innerError) {
+          console.error("Fallo total al obtener token:", innerError);
+        }
+      }
     }
     return token;
   }
 
   const loadMeasurements = async () => {
     const data = await getAdminSizes();
-    if (data) Object.keys(data).length > 0 && setMeasurements(data);
+    if (data && Object.keys(data).length > 0) {
+      setMeasurements(data);
+    } else {
+      // Fallback inicial si no hay nada en la nube
+      setMeasurements({
+        '16': { pecho: '45', largo: '60', manga: '55' },
+        'S': { pecho: '50', largo: '65', manga: '60' },
+        'M': { pecho: '55', largo: '70', manga: '65' },
+        'L': { pecho: '60', largo: '75', manga: '70' },
+        'XL': { pecho: '65', largo: '80', manga: '75' },
+      });
+    }
+  };
+
+  const handleAddSize = () => {
+    if (!newSizeName.trim()) {
+      Alert.alert('Error', 'Ingresa un nombre para la talla (ej: XXL)');
+      return;
+    }
+    const name = newSizeName.trim().toUpperCase();
+    if (measurements[name]) {
+      Alert.alert('Error', 'Esta talla ya existe.');
+      return;
+    }
+    setMeasurements({
+      ...measurements,
+      [name]: { pecho: '', largo: '', manga: '' }
+    });
+    setNewSizeName('');
+  };
+
+  const handleDeleteSize = (size) => {
+    Alert.alert(
+      'Eliminar Talla',
+      `¿Estás seguro de que quieres eliminar la talla ${size}? Esto afectará a la calculadora de todos los alumnos.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { 
+          text: 'Eliminar', 
+          style: 'destructive', 
+          onPress: () => {
+            const updated = { ...measurements };
+            delete updated[size];
+            setMeasurements(updated);
+          }
+        }
+      ]
+    );
   };
 
   const loadOrders = async () => {
@@ -196,8 +292,8 @@ export default function AdminScreen() {
       }
 
       const sortedExport = [...listToExport].sort((a, b) => {
-        const pA = a.personalInfo || {};
-        const pB = b.personalInfo || {};
+        const pA = a.type === 'GROUP_ORDER' ? a.groupInfo : (a.personalInfo || {});
+        const pB = b.type === 'GROUP_ORDER' ? b.groupInfo : (b.personalInfo || {});
         if ((pA.region || '').toLowerCase() !== (pB.region || '').toLowerCase()) return (pA.region || '').localeCompare(pB.region || '');
         if ((pA.ciudad || '').toLowerCase() !== (pB.ciudad || '').toLowerCase()) return (pA.ciudad || '').localeCompare(pB.ciudad || '');
         if ((pA.comuna || '').toLowerCase() !== (pB.comuna || '').toLowerCase()) return (pA.comuna || '').localeCompare(pB.comuna || '');
@@ -206,16 +302,32 @@ export default function AdminScreen() {
         return 0;
       });
 
-      const formattedData = sortedExport.map(o => {
-        const p = o.personalInfo || {};
-        return {
-          'Nombre del Alumno': `${p.nombre || ''} ${p.apellido || ''}`.trim(),
-          'Colegio': p.colegio || '',
-          'Region': p.region || '',
-          'Ciudad': p.ciudad || '',
-          'Apodo': p.apodo || '',
-          'Talla': o.tallaElegida || ''
-        };
+      const formattedData = sortedExport.flatMap(o => {
+        if (o.type === 'GROUP_ORDER') {
+          const g = o.groupInfo || {};
+          return (o.estudiantes || []).map(s => ({
+            'Nombre del Alumno': `${s.nombre || ''} ${s.apellido || ''}`.trim(),
+            'Colegio': g.colegio || '',
+            'Curso': g.curso || '',
+            'Region': g.region || '',
+            'Ciudad': g.ciudad || '',
+            'Apodo': s.apodo || '',
+            'Talla': s.talla || '',
+            'Tipo Pedido': 'GRUPAL'
+          }));
+        } else {
+          const p = o.personalInfo || {};
+          return [{
+            'Nombre del Alumno': `${p.nombre || ''} ${p.apellido || ''}`.trim(),
+            'Colegio': p.colegio || '',
+            'Curso': p.curso || '',
+            'Region': p.region || '',
+            'Ciudad': p.ciudad || '',
+            'Apodo': p.apodo || '',
+            'Talla': o.tallaElegida || '',
+            'Tipo Pedido': 'INDIVIDUAL'
+          }];
+        }
       });
 
       const ws = XLSX.utils.json_to_sheet(formattedData);
@@ -241,10 +353,12 @@ export default function AdminScreen() {
       ws['!cols'] = [
         { wch: 30 }, // Nombre
         { wch: 35 }, // Colegio
+        { wch: 15 }, // Curso
         { wch: 20 }, // Region
         { wch: 20 }, // Ciudad
         { wch: 20 }, // Apodo
-        { wch: 15 }  // Talla
+        { wch: 10 }, // Talla
+        { wch: 15 }  // Tipo
       ];
 
       const wb = XLSX.utils.book_new();
@@ -304,20 +418,24 @@ export default function AdminScreen() {
     try {
       await signInWithEmailAndPassword(auth, emailInput, passwordInput);
       
-      if (rememberMe) {
-        await AsyncStorage.setItem('admin_email', emailInput);
-        await AsyncStorage.setItem('admin_pass', passwordInput);
-        await AsyncStorage.setItem('admin_remember', 'true');
+      const userProfile = await getUserProfile(auth.currentUser.uid);
+      if (userProfile?.role === 'admin' || emailInput === 'inzunzajuan202@gmail.com') {
+        if (rememberMe) {
+          await AsyncStorage.setItem('admin_email', emailInput);
+          await AsyncStorage.setItem('admin_pass', passwordInput);
+          await AsyncStorage.setItem('admin_remember', 'true');
+        } else {
+          await AsyncStorage.removeItem('admin_email');
+          await AsyncStorage.removeItem('admin_pass');
+          await AsyncStorage.setItem('admin_remember', 'false');
+        }
+        setIsAuthenticated(true);
       } else {
-        await AsyncStorage.removeItem('admin_email');
-        await AsyncStorage.removeItem('admin_pass');
-        await AsyncStorage.setItem('admin_remember', 'false');
+        throw new Error('No tienes permisos de administrador.');
       }
-
-      setIsAuthenticated(true);
     } catch (e) {
       console.log('Login error:', e);
-      Alert.alert('Acceso Denegado', 'El correo o la contraseña son incorrectos. Verifica en Firebase Authentication.');
+      Alert.alert('Acceso Denegado', e.message === 'No tienes permisos de administrador.' ? e.message : 'El correo o la contraseña son incorrectos.');
       setPasswordInput('');
     } finally {
       setIsLoggingIn(false);
@@ -329,21 +447,23 @@ export default function AdminScreen() {
   };
 
   const saveSettings = async () => {
+    const sizes = Object.keys(measurements);
+    if (sizes.length === 0) {
+      Alert.alert('Error', 'Debes tener al menos una talla configurada.');
+      return;
+    }
+
     let isValid = true;
-    for (const size of SIZES) {
+    for (const size of sizes) {
       const p = parseFloat(String(measurements[size].pecho).replace(',', '.'));
       const l = parseFloat(String(measurements[size].largo).replace(',', '.'));
       const m = parseFloat(String(measurements[size].manga).replace(',', '.'));
 
       if (isNaN(p) || p <= 0 || isNaN(l) || l <= 0 || isNaN(m) || m <= 0) {
         isValid = false;
-        break;
+        Alert.alert('Medidas Inválidas', `La talla ${size} tiene medidas incorrectas. Deben ser numéricas y mayores a 0.`);
+        return;
       }
-    }
-
-    if (!isValid) {
-      Alert.alert('Medidas Inválidas', 'Todas las medidas deben ser numéricas y mayores a 0. Verifica no haber dejado campos vacíos ni letras.');
-      return;
     }
 
     setIsSaving(true);
@@ -435,6 +555,36 @@ export default function AdminScreen() {
     await saveAppData(updated);
   };
 
+  const handleResetAppData = async () => {
+    Alert.alert(
+      'Restablecer Base de Datos',
+      '¿Estás seguro de que quieres restablecer todos los colegios, cursos y regiones a los valores originales de Chile? Esto reemplazará tu configuración actual.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { 
+          text: 'Restablecer Todo', 
+          style: 'destructive', 
+          onPress: async () => {
+            setIsSavingAppData(true);
+            const defaults = {
+              schools: COLEGIOS_REALES,
+              courses: CURSOS,
+              regions: REGIONES
+            };
+            const success = await saveAppData(defaults);
+            if (success) {
+              setAppData(defaults);
+              Alert.alert('Éxito', 'La base de datos ha sido restablecida con los valores por defecto.');
+            } else {
+              Alert.alert('Error', 'No se pudo restablecer la base de datos.');
+            }
+            setIsSavingAppData(false);
+          }
+        }
+      ]
+    );
+  };
+
   const simulateNotification = async () => {
     try {
       const { status } = await Notifications.getPermissionsAsync();
@@ -443,7 +593,7 @@ export default function AdminScreen() {
           return;
       }
 
-      const projectId = Constants?.expoConfig?.extra?.eas?.projectId || Constants?.easConfig?.projectId;
+      const projectId = Constants?.expoConfig?.extra?.eas?.projectId || Constants?.easConfig?.projectId || "c3f5b7d0-8b84-42fa-930e-45bb6d125037";
       const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
       
       const response = await fetch('https://exp.host/--/api/v2/push/send', {
@@ -454,19 +604,21 @@ export default function AdminScreen() {
           title: '🛎️ ¡Prueba de Conexión!',
           body: 'Si ves esto, las notificaciones están configuradas correctamente.',
           sound: 'default',
+          priority: 'high',
+          channelId: 'default',
         }),
       });
 
       if (response.ok) {
-        Alert.alert('Prueba enviada', 'Deberías recibir una notificación en unos segundos.');
+        Alert.alert('Prueba enviada', `Deberías recibir una notificación en unos segundos.\n\nToken usado:\n${token}`);
       } else {
         const error = await response.json();
         console.error("Error de Expo API:", error);
-        Alert.alert('Error', 'No se pudo enviar la notificación a través de los servidores de Expo.');
+        Alert.alert('Error Expo', `Detalle: ${JSON.stringify(error.errors || error)}`);
       }
     } catch (e) {
       console.error(e);
-      Alert.alert('Error de Configuración', 'Hubo un error al intentar generar el token de prueba.');
+      Alert.alert('Error de Configuración', `Hubo un error al intentar generar el token de prueba: ${e.message}`);
     }
   };
 
@@ -545,6 +697,9 @@ export default function AdminScreen() {
         <TouchableOpacity style={[styles.tab, activeTab === 'pedidos' && styles.activeTab]} onPress={() => setActiveTab('pedidos')}>
           <Text style={[styles.tabText, activeTab === 'pedidos' && styles.activeTabText]}>Pedidos ({orders.length})</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[styles.tab, activeTab === 'encargados' && styles.activeTab]} onPress={() => setActiveTab('encargados')}>
+          <Text style={[styles.tabText, activeTab === 'encargados' && styles.activeTabText]}>Encargados</Text>
+        </TouchableOpacity>
       </View>
 
       <TouchableOpacity 
@@ -561,13 +716,35 @@ export default function AdminScreen() {
               Define las medidas estándar. Todos los teléfonos de los alumnos leerán estos datos.
             </Text>
 
-            {SIZES.map((size) => (
+            <View style={styles.configCard}>
+              <Text style={styles.configTitle}>➕ Nueva Talla</Text>
+              <View style={styles.addInputRow}>
+                <TextInput
+                  style={[styles.input, { flex: 1, marginRight: 8 }]}
+                  placeholder="Ej: XXL, 14, 2 XL..."
+                  placeholderTextColor="#6B7280"
+                  value={newSizeName}
+                  onChangeText={setNewSizeName}
+                />
+                <TouchableOpacity style={styles.addButton} onPress={handleAddSize}>
+                  <Plus color="#fff" size={24} />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {Object.keys(measurements).map((size) => (
               <View key={size} style={styles.sizeCard}>
                 <View style={styles.sizeHeader}>
                   <View style={styles.sizeBadge}>
                     <Text style={styles.sizeBadgeText}>{size}</Text>
                   </View>
                   <Text style={styles.sizeTitle}>Talla {size}</Text>
+                  <TouchableOpacity 
+                    style={{ marginLeft: 'auto', padding: 8 }} 
+                    onPress={() => handleDeleteSize(size)}
+                  >
+                    <Trash2 color="#EF4444" size={20} />
+                  </TouchableOpacity>
                 </View>
 
                 <View style={styles.inputsRow}>
@@ -736,6 +913,89 @@ export default function AdminScreen() {
             </View>
             {validNames.length === 0 && <Text style={styles.moreItemsText}>No hay nombres adicionales guardados en la nube.</Text>}
           </View>
+
+          {/* BOTÓN DE RESTABLECIMIENTO TOTAL */}
+          <View style={{ marginTop: 20, marginBottom: 40 }}>
+            <TouchableOpacity 
+              style={[styles.addButton, { backgroundColor: '#374151', paddingVertical: 14, flexDirection: 'row' }]} 
+              onPress={handleResetAppData}
+              disabled={isSavingAppData}
+            >
+              <Download color="#94A3B8" size={20} style={{ marginRight: 8 }} />
+              <Text style={{ color: '#F9FAFB', fontWeight: 'bold' }}>Restablecer Base de Datos (Default Chile)</Text>
+            </TouchableOpacity>
+            <Text style={{ color: '#6B7280', fontSize: 11, textAlign: 'center', marginTop: 8 }}>
+              Usa esto para cargar todos los colegios y regiones reales de una sola vez.
+            </Text>
+          </View>
+        </ScrollView>
+      ) : activeTab === 'encargados' ? (
+        <ScrollView contentContainerStyle={styles.content}>
+          <Text style={styles.headerSubtitle}>Gestión de responsables por curso y colegio.</Text>
+          
+          <View style={styles.configCard}>
+             <Text style={styles.configTitle}>🔍 Filtrar por Grupo</Text>
+             <View style={styles.inputGroup}>
+                <Text style={styles.label}>Colegio</Text>
+                <TextInput 
+                   style={styles.input} 
+                   placeholder="Escribe el colegio..." 
+                   placeholderTextColor="#6B7280"
+                   value={managerFilters.school}
+                   onChangeText={(val) => setManagerFilters({...managerFilters, school: val})}
+                />
+             </View>
+             <View style={[styles.inputGroup, {marginTop: 12}]}>
+                <Text style={styles.label}>Curso</Text>
+                <TextInput 
+                   style={styles.input} 
+                   placeholder="Escribe el curso..." 
+                   placeholderTextColor="#6B7280"
+                   value={managerFilters.course}
+                   onChangeText={(val) => setManagerFilters({...managerFilters, course: val})}
+                />
+             </View>
+          </View>
+
+          {/* Resultado del Filtro */}
+          {(managerFilters.school || managerFilters.course) && (
+            <View style={[styles.configCard, {backgroundColor: '#1E293B', borderColor: '#3B82F6'}]}>
+              <Text style={[styles.configTitle, {color: '#3B82F6'}]}>✅ Encargado Encontrado</Text>
+              {managers.filter(m => 
+                (!managerFilters.school || m.school?.toLowerCase().includes(managerFilters.school.toLowerCase())) &&
+                (!managerFilters.course || m.course?.toLowerCase().includes(managerFilters.course.toLowerCase()))
+              ).length > 0 ? (
+                managers.filter(m => 
+                  (!managerFilters.school || m.school?.toLowerCase().includes(managerFilters.school.toLowerCase())) &&
+                  (!managerFilters.course || m.course?.toLowerCase().includes(managerFilters.course.toLowerCase()))
+                ).map((m, i) => (
+                  <View key={i} style={{marginTop: 10}}>
+                    <Text style={{color: '#fff', fontSize: 16, fontWeight: 'bold'}}>{m.nombre}</Text>
+                    <Text style={{color: '#9CA3AF', fontSize: 14}}>{m.email}</Text>
+                    <Text style={{color: '#3B82F6', fontSize: 12, marginTop: 4}}>{m.school} - {m.course}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={{color: '#9CA3AF', marginTop: 10}}>No se encontró ningún encargado con esos filtros.</Text>
+              )}
+            </View>
+          )}
+
+          <Text style={[styles.configTitle, {marginTop: 20}]}>📋 Todos los Encargados ({managers.length})</Text>
+          {managers.map((m, i) => (
+            <View key={m.id || i} style={[styles.sizeCard, {padding: 12}]}>
+              <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                 <View style={[styles.sizeBadge, {backgroundColor: '#10B981'}]}>
+                    <Text style={styles.sizeBadgeText}>{m.nombre.charAt(0).toUpperCase()}</Text>
+                 </View>
+                 <View style={{flex: 1}}>
+                    <Text style={{color: '#F9FAFB', fontWeight: 'bold'}}>{m.nombre}</Text>
+                    <Text style={{color: '#9CA3AF', fontSize: 12}}>{m.email}</Text>
+                    <Text style={{color: '#10B981', fontSize: 11, fontWeight: 'bold'}}>{m.school} • {m.course}</Text>
+                 </View>
+              </View>
+            </View>
+          ))}
         </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={styles.ordersContent}>
@@ -752,12 +1012,15 @@ export default function AdminScreen() {
             <Text style={styles.noOrdersText}>No hay pedidos registrados.</Text>
           ) : (
             sortedOrdersForRender.map((order, index) => {
-              const prev = index > 0 ? sortedOrdersForRender[index - 1].personalInfo : null;
-              const curr = order.personalInfo || {};
+              const isGroup = order.type === 'GROUP_ORDER';
+              const prevType = index > 0 ? sortedOrdersForRender[index - 1].type : null;
+              const prevInfo = index > 0 ? (prevType === 'GROUP_ORDER' ? sortedOrdersForRender[index - 1].groupInfo : sortedOrdersForRender[index - 1].personalInfo) : null;
+              
+              const curr = isGroup ? (order.groupInfo || {}) : (order.personalInfo || {});
 
-              const showLocation = !prev || prev.region?.toLowerCase() !== curr.region?.toLowerCase() || prev.ciudad?.toLowerCase() !== curr.ciudad?.toLowerCase() || prev.comuna?.toLowerCase() !== curr.comuna?.toLowerCase();
-              const showColegio = showLocation || prev.colegio?.toLowerCase() !== curr.colegio?.toLowerCase();
-              const showCurso = showColegio || prev.curso?.toLowerCase() !== curr.curso?.toLowerCase();
+              const showLocation = !prevInfo || prevInfo.region?.toLowerCase() !== curr.region?.toLowerCase() || prevInfo.ciudad?.toLowerCase() !== curr.ciudad?.toLowerCase() || prevInfo.comuna?.toLowerCase() !== curr.comuna?.toLowerCase();
+              const showColegio = showLocation || prevInfo.colegio?.toLowerCase() !== curr.colegio?.toLowerCase();
+              const showCurso = showColegio || prevInfo.curso?.toLowerCase() !== curr.curso?.toLowerCase();
 
               const dateObj = new Date(order.date);
 
@@ -808,11 +1071,18 @@ export default function AdminScreen() {
 
                   <View style={styles.orderCard}>
                     <View style={styles.orderHeaderRow}>
-                      <View style={styles.orderUserBadge}>
-                        <Text style={styles.orderUserLetter}>{(curr.nombre || 'A').charAt(0).toUpperCase()}</Text>
+                      <View style={[styles.orderUserBadge, isGroup && {backgroundColor: '#10B981'}]}>
+                        <Text style={styles.orderUserLetter}>{isGroup ? 'G' : (curr.nombre || 'A').charAt(0).toUpperCase()}</Text>
                       </View>
                       <View style={styles.orderUserTexts}>
-                        <Text style={styles.orderName}>{curr.nombre || 'Sin Nombre'} {curr.apellido || ''}</Text>
+                        <View style={{flexDirection: 'row', alignItems: 'center'}}>
+                          <Text style={styles.orderName}>{isGroup ? `PEDIDO GRUPAL (${order.estudiantes?.length || 0})` : `${curr.nombre || 'Sin Nombre'} ${curr.apellido || ''}`}</Text>
+                          {order.status && (
+                            <View style={{marginLeft: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: order.status === 'PAID' ? '#10B981' : '#F59E0B'}}>
+                              <Text style={{color: '#fff', fontSize: 10, fontWeight: 'bold'}}>{order.status}</Text>
+                            </View>
+                          )}
+                        </View>
                         <Text style={styles.orderDate}>{dateObj.toLocaleDateString()} {dateObj.toLocaleTimeString()}</Text>
                       </View>
                       <TouchableOpacity style={styles.deleteOrderBtn} onPress={() => handleDeleteOrder(order.id)}>
@@ -820,20 +1090,43 @@ export default function AdminScreen() {
                       </TouchableOpacity>
                     </View>
 
-                    <View style={styles.orderMetricsBox}>
-                      <View style={styles.metricsRow}>
-                        <Text style={styles.metricText}>Pecho: {order.medidas?.pecho}cm</Text>
-                        <Text style={styles.metricText}>Largo: {order.medidas?.largo}cm</Text>
-                        <Text style={styles.metricText}>Manga: {order.medidas?.manga}cm</Text>
+                    {isGroup ? (
+                      <View style={styles.groupStudentsList}>
+                        <Text style={{color: '#9CA3AF', marginBottom: 5, fontSize: 12, fontWeight: 'bold'}}>ALUMNOS:</Text>
+                        {(order.estudiantes || []).map((s, idx) => (
+                           <Text key={idx} style={{color: '#F9FAFB', fontSize: 13, marginBottom: 2}}>
+                             • {s.nombre} {s.apellido} - <Text style={{fontWeight: 'bold', color: '#3B82F6'}}>{s.talla}</Text>
+                           </Text>
+                        ))}
+
+                        {order.disenos && order.disenos.length > 0 && (
+                          <View style={{marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#374151'}}>
+                            <Text style={{color: '#9CA3AF', marginBottom: 5, fontSize: 12, fontWeight: 'bold'}}>ADJUNTOS:</Text>
+                            {order.disenos.map((file, fIdx) => (
+                              <View key={fIdx} style={{flexDirection: 'row', alignItems: 'center', marginBottom: 4}}>
+                                <File color="#9CA3AF" size={14} style={{marginRight: 6}} />
+                                <Text style={{color: '#3B82F6', fontSize: 12}}>{file.name || 'Archivo sin nombre'}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        )}
                       </View>
-                      <View style={styles.decisionRow}>
-                        <Text style={styles.decisionSugg}>Sugerida: {order.tallaRecomendada}</Text>
-                        <View style={styles.decisionFinalBlock}>
-                          <Text style={styles.decisionLabel}>ESCOGIDA:</Text>
-                          <Text style={styles.decisionFinalSize}>{order.tallaElegida}</Text>
+                    ) : (
+                      <View style={styles.orderMetricsBox}>
+                        <View style={styles.metricsRow}>
+                          <Text style={styles.metricText}>Pecho: {order.medidas?.pecho}cm</Text>
+                          <Text style={styles.metricText}>Largo: {order.medidas?.largo}cm</Text>
+                          <Text style={styles.metricText}>Manga: {order.medidas?.manga}cm</Text>
+                        </View>
+                        <View style={styles.decisionRow}>
+                          <Text style={styles.decisionSugg}>Sugerida: {order.tallaRecomendada}</Text>
+                          <View style={styles.decisionFinalBlock}>
+                            <Text style={styles.decisionLabel}>ESCOGIDA:</Text>
+                            <Text style={styles.decisionFinalSize}>{order.tallaElegida}</Text>
+                          </View>
                         </View>
                       </View>
-                    </View>
+                    )}
                   </View>
                 </View>
               );
@@ -893,6 +1186,7 @@ const styles = StyleSheet.create({
   orderDate: { color: '#9CA3AF', fontSize: 12, marginTop: 2 },
   deleteOrderBtn: { padding: 8 },
   orderMetricsBox: { backgroundColor: '#111827', borderRadius: 12, padding: 12 },
+  groupStudentsList: { backgroundColor: '#111827', borderRadius: 12, padding: 12, borderWidth: 1, borderColor: '#374151' },
   metricsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12, paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: '#1F2937' },
   metricText: { color: '#D1D5DB', fontSize: 14 },
   decisionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },

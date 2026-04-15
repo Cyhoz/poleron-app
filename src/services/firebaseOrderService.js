@@ -183,20 +183,6 @@ export const getProducts = async () => {
     }
 };
 
-export const initiatePayment = async (amount, buyOrder, sessionId) => {
-    try {
-        const API_BASE_URL = 'https://poleron-app-2.onrender.com';
-        const response = await fetch(`${API_BASE_URL}/api/pay/initiate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ amount, buyOrder, sessionId })
-        });
-        return await response.json();
-    } catch (error) {
-        console.error("Error initiating payment", error);
-        return null;
-    }
-};
 
 // --- Manejo de Nombres Autorizados ---
 
@@ -230,4 +216,91 @@ export const subscribeToValidNames = (callback) => {
     });
     callback(names.sort());
   });
+};
+
+// --- Manejo de Perfiles y Roles ---
+
+export const getUserProfile = async (uid) => {
+  try {
+    const docSnap = await getDoc(doc(db, "users", uid));
+    return docSnap.exists() ? docSnap.data() : null;
+  } catch (error) {
+    console.error("Error obteniendo perfil de usuario:", error);
+    return null;
+  }
+};
+
+export const checkManagerExists = async (school, course) => {
+  try {
+    // Usamos una colección separada para verificar unicidad rápida por ID de documento
+    const managerId = `${school.replace(/\s+/g, '_')}_${course.replace(/\s+/g, '_')}`.toUpperCase();
+    const docSnap = await getDoc(doc(db, "course_managers", managerId));
+    return docSnap.exists();
+  } catch (error) {
+    console.error("Error verificando existencia de encargado:", error);
+    return false;
+  }
+};
+
+export const registerCourseManager = async (uid, school, course) => {
+  try {
+    const managerId = `${school.replace(/\s+/g, '_')}_${course.replace(/\s+/g, '_')}`.toUpperCase();
+    await setDoc(doc(db, "course_managers", managerId), {
+      managerUid: uid,
+      school,
+      course,
+      assignedAt: new Date().toISOString()
+    });
+    return true;
+  } catch (error) {
+    console.error("Error registrando encargado de curso:", error);
+    return false;
+  }
+};
+
+export const saveCalculatorResult = async (resultData) => {
+  try {
+    await addDoc(collection(db, "calculator_results"), {
+      ...resultData,
+      timestamp: new Date().toISOString()
+    });
+    return true;
+  } catch (error) {
+    console.error("Error guardando resultado de calculadora:", error);
+    return false;
+  }
+};
+
+export const getCalculatorResultsByCourse = async (school, course) => {
+  try {
+    const q = query(
+      collection(db, "calculator_results"),
+      where("school", "==", school),
+      where("course", "==", course)
+    );
+    const querySnapshot = await getDocs(q);
+    const results = [];
+    querySnapshot.forEach((doc) => {
+      results.push({ id: doc.id, ...doc.data() });
+    });
+    return results;
+  } catch (error) {
+    console.error("Error obteniendo resultados de calculadora:", error);
+    return [];
+  }
+};
+
+export const getAllManagers = async () => {
+  try {
+    const q = query(collection(db, "users"), where("role", "==", "manager"));
+    const querySnapshot = await getDocs(q);
+    const managers = [];
+    querySnapshot.forEach((doc) => {
+      managers.push({ id: doc.id, ...doc.data() });
+    });
+    return managers;
+  } catch (error) {
+    console.error("Error obteniendo lista de encargados:", error);
+    return [];
+  }
 };

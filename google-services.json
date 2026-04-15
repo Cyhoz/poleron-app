@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "875580801",
+    "firebase_url": "https://app-polerones-default-rtdb.firebaseio.com",
+    "project_id": "app-polerones",
+    "storage_bucket": "app-polerones.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:875580801:android:2c5d71f226e2fa18a6ac80",
+        "android_client_info": {
+          "package_name": "com.cyhoz.tupoleron"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAfT1hJhqYxaqQgEtYVI-f6QFh4KhD7wXM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

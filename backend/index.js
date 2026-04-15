@@ -6,7 +6,7 @@ const dotenv = require('dotenv');
 const { db } = require('./firebase');
 const { encrypt, decrypt } = require('./utils/encryption');
 const axios = require('axios');
-const { tx } = require('./utils/webpay');
+const { sendOrderEmail } = require('./utils/emailService');
 
 dotenv.config();
 
@@ -15,7 +15,7 @@ const PORT = process.env.PORT || 10000; // Render usa el puerto 10000 por defect
 
 app.use(helmet()); // Seguridad de headers HTTP
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' })); // Aumentamos el límite para permitir múltiples archivos adjuntos
 
 // Limitador de peticiones para evitar fuerza bruta y DoS
 const limiter = rateLimit({
@@ -128,52 +128,116 @@ app.post('/api/orders', async (req, res) => {
     try {
         const orderData = req.body;
         
-        if (!orderData.personalInfo) {
-            return res.status(400).json({ error: 'Datos de pedido incompletos' });
+        // 1. Cifrado de datos PII (Personally Identifiable Information)
+        if (orderData.personalInfo && !orderData.isEncrypted) {
+            orderData.personalInfo.nombre = encrypt(orderData.personalInfo.nombre);
+            orderData.personalInfo.apellido = encrypt(orderData.personalInfo.apellido);
+            if (orderData.personalInfo.rut) orderData.personalInfo.rut = encrypt(orderData.personalInfo.rut);
+            if (orderData.personalInfo.apodo) orderData.personalInfo.apodo = encrypt(orderData.personalInfo.apodo);
         }
 
-        // Cifrado de datos sensibles antes de guardar en Firestore
-        const secureInfo = {
-            ...orderData.personalInfo,
-            nombre: encrypt(orderData.personalInfo.nombre),
-            apellido: encrypt(orderData.personalInfo.apellido),
-            rut: encrypt(orderData.personalInfo.rut),
-            apodo: encrypt(orderData.personalInfo.apodo)
-        };
+        if (orderData.requesterInfo) {
+            orderData.requesterInfo.nombre = encrypt(orderData.requesterInfo.nombre);
+            orderData.requesterInfo.apellido = encrypt(orderData.requesterInfo.apellido || '');
+            orderData.requesterInfo.email = encrypt(orderData.requesterInfo.email);
+            orderData.requesterInfo.telefono = encrypt(orderData.requesterInfo.telefono);
+        }
+
+        if (orderData.estudiantes && Array.isArray(orderData.estudiantes)) {
+            orderData.estudiantes = orderData.estudiantes.map(s => ({
+                ...s,
+                nombre: encrypt(s.nombre),
+                apellido: encrypt(s.apellido),
+                apodo: s.apodo ? encrypt(s.apodo) : ''
+            }));
+        }
+
+        if (orderData.disenos && Array.isArray(orderData.disenos)) {
+            orderData.disenos = orderData.disenos.map(f => ({
+                ...f,
+                base64: encrypt(f.base64)
+            }));
+        }
+
+        orderData.isEncrypted = true;
+
+        // NOTA: Para el envío de correo y notificación, necesitamos descifrar temporalmente
+        const decryptedOrderData = JSON.parse(JSON.stringify(orderData));
+        if (decryptedOrderData.requesterInfo) {
+            decryptedOrderData.requesterInfo.nombre = decrypt(decryptedOrderData.requesterInfo.nombre);
+            decryptedOrderData.requesterInfo.apellido = decrypt(decryptedOrderData.requesterInfo.apellido);
+        }
+        if (decryptedOrderData.estudiantes) {
+            decryptedOrderData.estudiantes = decryptedOrderData.estudiantes.map(s => ({
+                ...s,
+                nombre: decrypt(s.nombre),
+                apellido: decrypt(s.apellido),
+                apodo: s.apodo ? decrypt(s.apodo) : ''
+            }));
+        }
+        if (decryptedOrderData.disenos) {
+            decryptedOrderData.disenos = decryptedOrderData.disenos.map(f => ({
+                ...f,
+                base64: decrypt(f.base64)
+            }));
+        }
+
+        // --- OPTIMIZACIÓN FIRESTORE (Límite 1MB) ---
+        // Creamos una copia para guardar en BD que NO tenga el base64 pesado
+        const firestoreData = JSON.parse(JSON.stringify(orderData));
+        if (firestoreData.disenos) {
+            firestoreData.disenos = firestoreData.disenos.map(f => ({
+                ...f,
+                base64: "[CONTENIDO_PESADO_EN_CORREO]" // No guardamos el binario en Firestore para no bloquear el sistema
+            }));
+        }
+        if (firestoreData.disenoBase64) {
+            firestoreData.disenoBase64 = "[CONTENIDO_PESADO_EN_CORREO]";
+        }
 
         const docRef = await db.collection('orders').add({
-            ...orderData,
-            personalInfo: secureInfo,
-            isEncrypted: true, 
+            ...firestoreData,
             date: new Date().toISOString()
         });
 
-        // --- NOTIFICACIÓN PUSH ESTILO WHATSAPP PARA EL ADMIN ---
+        // --- ENVIAR CORREO CON EXCEL (Usamos los datos completos) ---
+        try {
+            await sendOrderEmail(decryptedOrderData);
+        } catch (emailError) {
+            console.error('Error enviando email con Excel:', emailError.message);
+        }
+
+        // --- NOTIFICACIÓN PUSH ---
         try {
             const adminConfig = await db.collection('config').doc('admin').get();
             if (adminConfig.exists) {
                 const { pushToken } = adminConfig.data();
                 if (pushToken) {
+                    const requesterName = decryptedOrderData.requesterInfo 
+                        ? `${decryptedOrderData.requesterInfo.nombre} ${decryptedOrderData.requesterInfo.apellido}`
+                        : (decryptedOrderData.personalInfo ? decryptedOrderData.personalInfo.nombre : 'Alguien');
+                    
+                    const courseName = orderData.groupInfo?.curso || orderData.personalInfo?.curso || 'N/A';
+
                     await axios.post('https://exp.host/--/api/v2/push/send', {
                         to: pushToken,
                         title: '📥 ¡Nuevo Pedido Recibido!',
-                        body: `Tienes un nuevo pedido de ${orderData.personalInfo.nombre} para el curso ${orderData.personalInfo.curso}.`,
+                        body: `Nuevo pedido de ${requesterName} para el curso ${courseName}.`,
                         sound: 'default',
-                        priority: 'high', // Asegura que aparezca de inmediato
-                        channelId: 'default', // Para Android
+                        priority: 'high',
+                        channelId: 'default',
                         data: { type: 'NEW_ORDER', orderId: docRef.id }
                     });
                 }
             }
         } catch (pushError) {
             console.error('Error enviando notificación push:', pushError.message);
-            // No detenemos la respuesta del pedido si falla la notificación
         }
 
         res.json({ success: true, id: docRef.id });
     } catch (error) {
-        console.error('Error al guardar pedido cifrado:', error);
-        res.status(500).json({ error: 'No se pudo procesar el pedido de forma segura' });
+        console.error('Error al guardar pedido:', error);
+        res.status(500).json({ error: 'No se pudo procesar el pedido' });
     }
 });
 
@@ -190,14 +254,37 @@ app.get('/api/admin/orders', async (req, res) => {
 
         snapshot.forEach(doc => {
             const data = doc.data();
-            if (data.isEncrypted && data.personalInfo) {
-                // Descifrar campos para el administrador
-                data.personalInfo.nombre = decrypt(data.personalInfo.nombre);
-                data.personalInfo.apellido = decrypt(data.personalInfo.apellido);
-                data.personalInfo.rut = decrypt(data.personalInfo.rut);
-                data.personalInfo.apodo = decrypt(data.personalInfo.apodo);
+            const order = { id: doc.id, ...data };
+
+            if (data.isEncrypted) {
+                if (order.personalInfo) {
+                    order.personalInfo.nombre = decrypt(order.personalInfo.nombre);
+                    order.personalInfo.apellido = decrypt(order.personalInfo.apellido);
+                    if (order.personalInfo.rut) order.personalInfo.rut = decrypt(order.personalInfo.rut);
+                    if (order.personalInfo.apodo) order.personalInfo.apodo = decrypt(order.personalInfo.apodo);
+                }
+                if (order.requesterInfo) {
+                    order.requesterInfo.nombre = decrypt(order.requesterInfo.nombre);
+                    order.requesterInfo.apellido = decrypt(order.requesterInfo.apellido);
+                    order.requesterInfo.email = decrypt(order.requesterInfo.email);
+                    order.requesterInfo.telefono = decrypt(order.requesterInfo.telefono);
+                }
+                if (order.estudiantes && Array.isArray(order.estudiantes)) {
+                    order.estudiantes = order.estudiantes.map(s => ({
+                        ...s,
+                        nombre: decrypt(s.nombre),
+                        apellido: decrypt(s.apellido),
+                        apodo: s.apodo ? decrypt(s.apodo) : ''
+                    }));
+                }
+                if (order.disenos && Array.isArray(order.disenos)) {
+                    order.disenos = order.disenos.map(f => ({
+                        ...f,
+                        base64: decrypt(f.base64)
+                    }));
+                }
             }
-            orders.push({ id: doc.id, ...data });
+            orders.push(order);
         });
 
         res.json(orders);
@@ -233,81 +320,6 @@ app.get('/api/products', async (req, res) => {
     }
 });
 
-/**
- * POST /api/pay/initiate
- * Inicia una transacción de Webpay
- */
-app.post('/api/pay/initiate', async (req, res) => {
-    try {
-        const { amount, buyOrder, sessionId } = req.body;
-        
-        // La URL a la que Transbank retornará al finalizar el pago
-        const returnUrl = `${req.protocol}://${req.get('host')}/api/pay/confirm`;
-
-        const response = await tx.create(buyOrder, sessionId, amount, returnUrl);
-        
-        // Guardamos el token en una colección temporal de transacciones pendientes
-        await db.collection('transactions').doc(response.token).set({
-            buyOrder,
-            sessionId,
-            amount,
-            status: 'INITIALIZED',
-            createdAt: new Date().toISOString()
-        });
-
-        res.json(response);
-    } catch (error) {
-        console.error('Error iniciando pago:', error);
-        res.status(500).json({ error: 'No se pudo iniciar la transacción' });
-    }
-});
-
-/**
- * GET /api/pay/confirm
- * Recibe el retorno de Transbank (vía redirección del browser)
- */
-app.get('/api/pay/confirm', async (req, res) => {
-    const token = req.query.token_ws;
-    
-    if (!token) {
-        return res.send('<h1>Error de Pago</h1><p>No se recibió el token de la transacción.</p>');
-    }
-
-    try {
-        const result = await tx.commit(token);
-        
-        const txRef = db.collection('transactions').doc(token);
-        const txDoc = await txRef.get();
-        
-        if (result.response_code === 0) {
-            // Pago Exitoso
-            await txRef.update({ status: 'AUTHORIZED', result });
-            
-            // Aquí podrías actualizar el pedido original si tienes el ID
-            res.send(`
-                <div style="text-align:center; font-family: sans-serif; padding: 50px;">
-                    <h1 style="color: #10B981;">✅ Pago Exitoso</h1>
-                    <p>Monto: $${result.amount}</p>
-                    <p>Orden: ${result.buy_order}</p>
-                    <p>Puedes volver a la aplicación.</p>
-                </div>
-            `);
-        } else {
-            // Pago Fallido o Rechazado
-            await txRef.update({ status: 'FAILED', result });
-            res.send(`
-                <div style="text-align:center; font-family: sans-serif; padding: 50px;">
-                    <h1 style="color: #EF4444;">❌ Pago Rechazado</h1>
-                    <p>Código: ${result.response_code}</p>
-                    <p>Por favor intenta nuevamente desde la aplicación.</p>
-                </div>
-            `);
-        }
-    } catch (error) {
-        console.error('Error confirmando pago:', error);
-        res.status(500).send('Error interno al procesar el pago.');
-    }
-});
 
 app.listen(PORT, () => {
     console.log(`Servidor ejecutándose en http://localhost:${PORT}`);

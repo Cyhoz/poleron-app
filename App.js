@@ -11,6 +11,7 @@ SplashScreen.preventAutoHideAsync();
 import HomeScreen from './src/screens/HomeScreen';
 import AdminScreen from './src/screens/AdminScreen';
 import ClientScreen from './src/screens/ClientScreen';
+import TeacherOrderScreen from './src/screens/TeacherOrderScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import { auth } from './src/services/firebaseConfig';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -68,7 +69,12 @@ export default function App() {
           <Stack.Screen 
             name="Client" 
             component={ClientScreen} 
-            options={{ title: 'Recomendación Talla' }} 
+            options={{ title: 'Calculadora de Talla' }} 
+          />
+          <Stack.Screen 
+            name="TeacherOrder" 
+            component={TeacherOrderScreen} 
+            options={{ title: 'Pedido Grupal' }} 
           />
           <Stack.Screen 
             name="Admin" 
