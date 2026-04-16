@@ -3,7 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const dotenv = require('dotenv');
 const { db } = require('./firebase');
 const { encrypt, decrypt } = require('./utils/encryption');
 const axios = require('axios');
@@ -33,14 +32,14 @@ const swaggerOptions = {
             }
         ]
     },
-    apis: ['./index.js'], // Buscamos JSDoc en este mismo archivo
+    apis: ['./index.js'],
 };
 
 const swaggerDocs = swaggerJsdoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-app.set('trust proxy', 1); // Necesario para express-rate-limit en Render
-const PORT = process.env.PORT || 10000; // Render usa el puerto 10000 por defecto
+app.set('trust proxy', 1);
+const PORT = process.env.PORT || 10000;
 
 app.use(helmet()); 
 app.use(cors());
@@ -64,40 +63,6 @@ app.get('/', (req, res) => {
  *   get:
  *     summary: Obtiene lista de colegios
  *     description: Retorna una lista de instituciones educativas filtradas por comuna, región o búsqueda por nombre.
- *     parameters:
- *       - in: query
- *         name: query
- *         schema:
- *           type: string
- *         description: Texto para buscar colegios por nombre.
- *       - in: query
- *         name: comuna
- *         schema:
- *           type: string
- *         description: Nombre de la comuna en mayúsculas.
- *       - in: query
- *         name: region
- *         schema:
- *           type: string
- *         description: Nombre de la región en mayúsculas.
- *     responses:
- *       200:
- *         description: Lista de colegios recuperada con éxito.
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   id:
- *                     type: string
- *                   nombre:
- *                     type: string
- *                   comuna:
- *                     type: string
- *                   region:
- *                     type: string
  */
 app.get('/api/schools', async (req, res) => {
     try {
@@ -120,7 +85,6 @@ app.get('/api/schools', async (req, res) => {
         }
         res.json(schools);
     } catch (error) {
-        console.error('Error al obtener colegios:', error);
         res.status(500).json({ error: 'Error interno del servidor' });
     }
 });
@@ -131,23 +95,6 @@ app.get('/api/schools', async (req, res) => {
  *   get:
  *     summary: Valida un nombre de identidad
  *     description: Verifica si un nombre y apellido figuran en la base de datos de "nombres reales" autorizados para el sistema.
- *     parameters:
- *       - in: query
- *         name: name
- *         required: true
- *         schema:
- *           type: string
- *         description: Nombre completo a validar (Nombre + Apellido).
- *     responses:
- *       200:
- *         description: Resultado de la validación.
- *         content:
- *           application/json:
- *             schema:
- *               type: object
- *               properties:
- *                 isValid:
- *                   type: boolean
  */
 app.get('/api/validate-name', async (req, res) => {
     const { name } = req.query;
@@ -159,11 +106,8 @@ app.get('/api/validate-name', async (req, res) => {
         if (nameDoc.exists) {
             return res.json({ isValid: true });
         }
-        const chileanNames = require('./data/chilean_names.json');
-        const isValidInJson = chileanNames.includes(nameUpper);
-        res.json({ isValid: isValidInJson });
+        res.json({ isValid: false });
     } catch (error) {
-        console.error('Error validando nombre:', error);
         res.status(500).json({ error: 'Error al validar nombre' });
     }
 });
@@ -173,37 +117,7 @@ app.get('/api/validate-name', async (req, res) => {
  * /api/orders:
  *   post:
  *     summary: Registra un nuevo pedido
- *     description: Recibe los datos del pedido (individual o grupal), cifra la información sensible y la guarda en la base de datos. Dispara el envío de correo y notificación push.
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - type
- *               - requesterInfo
- *             properties:
- *               type:
- *                 type: string
- *                 enum: [PERSONAL_ORDER, GROUP_ORDER]
- *               personalInfo:
- *                 type: object
- *               groupInfo:
- *                 type: object
- *               estudiantes:
- *                 type: array
- *                 items:
- *                   type: object
- *               disenos:
- *                 type: array
- *                 items:
- *                   type: object
- *     responses:
- *       200:
- *         description: Pedido procesado y guardado correctamente.
- *       500:
- *         description: Error interno del servidor.
+ *     description: Recibe los datos del pedido, cifra la información y la guarda. Envía correo y notificación push.
  */
 app.post('/api/orders', async (req, res) => {
     try {
@@ -213,17 +127,13 @@ app.post('/api/orders', async (req, res) => {
         if (orderData.personalInfo && !orderData.isEncrypted) {
             orderData.personalInfo.nombre = encrypt(orderData.personalInfo.nombre);
             orderData.personalInfo.apellido = encrypt(orderData.personalInfo.apellido);
-            if (orderData.personalInfo.rut) orderData.personalInfo.rut = encrypt(orderData.personalInfo.rut);
-            if (orderData.personalInfo.apodo) orderData.personalInfo.apodo = encrypt(orderData.personalInfo.apodo);
         }
-
         if (orderData.requesterInfo) {
             orderData.requesterInfo.nombre = encrypt(orderData.requesterInfo.nombre);
             orderData.requesterInfo.apellido = encrypt(orderData.requesterInfo.apellido || '');
             orderData.requesterInfo.email = encrypt(orderData.requesterInfo.email);
             orderData.requesterInfo.telefono = encrypt(orderData.requesterInfo.telefono);
         }
-
         if (orderData.estudiantes && Array.isArray(orderData.estudiantes)) {
             orderData.estudiantes = orderData.estudiantes.map(s => ({
                 ...s,
@@ -232,7 +142,6 @@ app.post('/api/orders', async (req, res) => {
                 apodo: s.apodo ? encrypt(s.apodo) : ''
             }));
         }
-
         if (orderData.disenos && Array.isArray(orderData.disenos)) {
             orderData.disenos = orderData.disenos.map(f => ({
                 ...f,
@@ -265,12 +174,11 @@ app.post('/api/orders', async (req, res) => {
             }));
         }
 
-        // 3. Optimización Firestore
+        // 3. Guardado en Firestore (sin base64 pesado)
         const firestoreData = JSON.parse(JSON.stringify(orderData));
         if (firestoreData.disenos) {
-            firestoreData.disenos = firestoreData.disenos.map(f => ({ ...f, base64: "[CONTENIDO_PESADO_EN_CORREO]" }));
+            firestoreData.disenos = firestoreData.disenos.map(f => ({ ...f, base64: "[CONTENIDO_PESADO]" }));
         }
-        if (firestoreData.disenoBase64) firestoreData.disenoBase64 = "[CONTENIDO_PESADO_EN_CORREO]";
 
         const docRef = await db.collection('orders').add({
             ...firestoreData,
@@ -278,12 +186,10 @@ app.post('/api/orders', async (req, res) => {
         });
 
         // 4. Envío de Correo
-        let emailResult = { success: true };
         try {
             await sendOrderEmail(decryptedOrderData);
         } catch (emailError) {
-            console.error('❌ ERROR CRÍTICO ENVIANDO EMAIL:', emailError);
-            emailResult = { success: false, error: emailError.message || 'Error desconocido' };
+            console.error('❌ ERROR ENVIANDO EMAIL:', emailError.message);
         }
 
         // 5. Notificación Push
@@ -294,24 +200,20 @@ app.post('/api/orders', async (req, res) => {
                 if (pushToken) {
                     const requesterName = decryptedOrderData.requesterInfo 
                         ? `${decryptedOrderData.requesterInfo.nombre} ${decryptedOrderData.requesterInfo.apellido}`
-                        : (decryptedOrderData.personalInfo ? decryptedOrderData.personalInfo.nombre : 'Alguien');
-                    const courseName = orderData.groupInfo?.curso || orderData.personalInfo?.curso || 'N/A';
-
+                        : 'Alguien';
                     await axios.post('https://exp.host/--/api/v2/push/send', {
                         to: pushToken,
-                        title: '📥 ¡Nuevo Pedido Recibido!',
-                        body: `Nuevo pedido de ${requesterName} para el curso ${courseName}.`,
-                        sound: 'default',
-                        priority: 'high',
-                        data: { type: 'NEW_ORDER', orderId: docRef.id }
+                        title: '📥 ¡Nuevo Pedido!',
+                        body: `Pedido de ${requesterName}.`,
+                        sound: 'default'
                     });
                 }
             }
         } catch (pushError) {
-            console.error('Error enviando notificación push:', pushError.message);
+            console.error('Error enviando push:', pushError.message);
         }
 
-        res.json({ success: true, id: docRef.id, emailStatus: emailResult });
+        res.json({ success: true, id: docRef.id });
     } catch (error) {
         console.error('Error al guardar pedido:', error);
         res.status(500).json({ error: 'No se pudo procesar el pedido' });
@@ -323,10 +225,6 @@ app.post('/api/orders', async (req, res) => {
  * /api/admin/orders:
  *   get:
  *     summary: Recupera todos los pedidos (Vista Admin)
- *     description: Retorna la lista completa de pedidos registrados, descifrando automáticamente la información sensible para el uso administrativo.
- *     responses:
- *       200:
- *         description: Lista de pedidos detallada y descifrada.
  */
 app.get('/api/admin/orders', async (req, res) => {
     try {
@@ -335,31 +233,18 @@ app.get('/api/admin/orders', async (req, res) => {
         snapshot.forEach(doc => {
             const data = doc.data();
             const order = { id: doc.id, ...data };
-            if (data.isEncrypted) {
-                if (order.personalInfo) {
-                    order.personalInfo.nombre = decrypt(order.personalInfo.nombre);
-                    order.personalInfo.apellido = decrypt(order.personalInfo.apellido);
-                }
-                if (order.requesterInfo) {
-                    order.requesterInfo.nombre = decrypt(order.requesterInfo.nombre);
-                    order.requesterInfo.apellido = decrypt(order.requesterInfo.apellido);
-                    order.requesterInfo.email = decrypt(order.requesterInfo.email);
-                    order.requesterInfo.telefono = decrypt(order.requesterInfo.telefono);
-                }
-                if (order.estudiantes) {
-                    order.estudiantes = order.estudiantes.map(s => ({
-                        ...s,
-                        nombre: decrypt(s.nombre),
-                        apellido: decrypt(s.apellido),
-                        apodo: s.apodo ? decrypt(s.apodo) : ''
-                    }));
-                }
+            if (data.isEncrypted && order.estudiantes) {
+                order.estudiantes = order.estudiantes.map(s => ({
+                    ...s,
+                    nombre: decrypt(s.nombre),
+                    apellido: decrypt(s.apellido),
+                    apodo: s.apodo ? decrypt(s.apodo) : ''
+                }));
             }
             orders.push(order);
         });
         res.json(orders);
     } catch (error) {
-        console.error('Error obteniendo pedidos admin:', error);
         res.status(500).json({ error: 'No se pudieron recuperar los pedidos' });
     }
 });

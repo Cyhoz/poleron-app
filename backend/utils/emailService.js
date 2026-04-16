@@ -60,9 +60,7 @@ async function sendOrderEmail(orderData) {
         const pass = process.env.SMTP_PASS;
 
         if (!pass) {
-            console.error('❌ ERROR: SMTP_PASS no está definida.');
-            console.log('Variables disponibles:', Object.keys(process.env).filter(k => !k.includes('KEY') && !k.includes('AUTH'))); 
-            throw new Error(`Configuración incompleta: Falta SMTP_PASS. Variables detectadas: ${Object.keys(process.env).filter(k => !k.includes('SECRET') && !k.includes('PASS')).join(', ')}`);
+            throw new Error('Configuración incompleta: SMTP_PASS no detectada');
         }
 
         const transporter = nodemailer.createTransport({
@@ -70,28 +68,17 @@ async function sendOrderEmail(orderData) {
             auth: {
                 user: user,
                 pass: pass
-            },
-            logger: true, // Registra en consola el protocolo SMTP
-            debug: true   // Muestra errores detallados de red
+            }
         });
-
-        // Verificación rápida del transporte
-        try {
-            await transporter.verify();
-            console.log('✅ Conexión SMTP verificada');
-        } catch (vError) {
-            console.error('❌ Error de Verificación SMTP:', vError.message);
-            throw new Error(`Fallo de conexión SMTP: ${vError.message}`);
-        }
 
         const adminEmail = process.env.ADMIN_EMAIL || 'inzunzajuan202@gmail.com';
         const requesterName = reqInfo.nombre ? `${reqInfo.nombre} ${reqInfo.apellido}` : 'Un cliente';
 
         const mailOptions = {
-            from: `"App Poleron" <${process.env.SMTP_USER || 'inzunzajuan202@gmail.com'}>`,
+            from: `"App Poleron" <${user}>`,
             to: adminEmail,
             subject: `Pedido Poleron - ${requesterName} - ${orderData.groupInfo?.colegio || 'Personal'}`,
-            text: `Nuevo pedido de ${requesterName}.\nColegio: ${orderData.groupInfo?.colegio || 'N/A'}\nAdjunto tabla de tallas.`,
+            text: `Nuevo pedido de ${requesterName}.\nColegio: ${orderData.groupInfo?.colegio || 'N/A'}\n\nSe adjunta el Excel detallado.`,
             attachments: [
                 {
                     filename: `Pedido_${Date.now()}.xlsx`,
@@ -113,12 +100,12 @@ async function sendOrderEmail(orderData) {
             });
         }
 
-        const info = await transporter.sendMail(mailOptions);
-        console.log('✅ Email enviado:', info.messageId);
+        await transporter.sendMail(mailOptions);
+        console.log('✅ Email enviado satisfactoriamente.');
         return true;
         
     } catch (error) {
-        console.error('❌ Error en sendOrderEmail:', error);
+        console.error('❌ Error en sendOrderEmail:', error.message);
         throw error;
     }
 }
