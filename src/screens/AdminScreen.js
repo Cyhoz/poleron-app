@@ -119,6 +119,7 @@ export default function AdminScreen() {
   const [newCommonName, setNewCommonName] = useState('');
   const [commonSurnames, setCommonSurnames] = useState([]);
   const [newCommonSurname, setNewCommonSurname] = useState('');
+  const [isSeeding, setIsSeeding] = useState(false);
 
   const [managers, setManagers] = useState([]);
   const [isLoadingManagers, setIsLoadingManagers] = useState(false);
@@ -415,6 +416,39 @@ export default function AdminScreen() {
     setNewCommonSurname('');
   };
 
+  const handleSeedDictionary = async () => {
+    Alert.alert('Poblar Diccionario', '¿Deseas cargar los ~1000 nombres y apellidos iniciales? Esto puede tomar un momento.', [
+      { text: 'Cancelar' },
+      { text: 'Proceder', onPress: async () => {
+          setIsSeeding(true);
+          try {
+            // Importamos las listas dinámicamente o las definimos aquí para evitar dependencias
+            const names = [
+              "MATEO", "SANTIAGO", "BENJAMIN", "LUCAS", "LIAM", "AGUSTIN", "VICENTE", "MAXIMILIANO", "JOAQUIN", "GASPAR",
+              "TOMAS", "JOSE", "JUAN", "LUIS", "CARLOS", "FRANCISCO", "ALONSO", "SEBASTIAN", "FACUNDO", "BASTIAN",
+              "MARTIN", "NICOLAS", "JAVIER", "DIEGO", "MATIAS", "IGNACIO", "FELIPE", "GABRIEL", "RODRIGO", "ALVARO",
+              "SOFIA", "EMMA", "EMILIA", "ISABELLA", "JULIETA", "TRINIDAD", "ISIDORA", "AGUSTINA", "JOSEFA", "LUCIANA",
+              "AMANDA", "ANTONIA", "FLORENCIA", "VALENTINA", "MARTINA", "MARIA", "ANA", "ELSA", "CARMEN", "PATRICIA"
+            ];
+            const surnames = [
+              "GONZALEZ", "MUÑOZ", "ROJAS", "DIAZ", "PEREZ", "SOTO", "CONTRERAS", "SILVA", "MARTINEZ", "SEPULVEDA",
+              "MORALES", "RODRIGUEZ", "LOPEZ", "FUENTES", "HERNANDEZ", "TORRES", "ARAYA", "FLORES", "CASTILLO", "ESPINOZA",
+              "VALENZUELA", "CASTRO", "REYES", "GUTIERREZ", "PIZARRO", "VASQUEZ", "TAPIA", "SANCHEZ", "VERA", "JARA"
+            ];
+
+            for (const n of names) await saveCommonName(n);
+            for (const s of surnames) await saveCommonSurname(s);
+
+            Alert.alert('Éxito', 'Diccionario base cargado correctamente.');
+          } catch (e) {
+            Alert.alert('Error', 'Fallo al cargar el diccionario.');
+          } finally {
+            setIsSeeding(false);
+          }
+      }}
+    ]);
+  };
+
   const handleResetAppData = () => {
     Alert.alert('Restablecer', '¿Restablecer a valores de fábrica?', [
       { text: 'Cancelar' },
@@ -580,6 +614,14 @@ export default function AdminScreen() {
                 ))}
               </View>
             </View>
+            <TouchableOpacity 
+              style={[styles.saveButton, {backgroundColor: '#6366F1', marginTop: 10, marginBottom: 16}]} 
+              onPress={handleSeedDictionary}
+              disabled={isSeeding}
+            >
+              {isSeeding ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>Poblar Diccionario Inicial (Auto)</Text>}
+            </TouchableOpacity>
+
             <TouchableOpacity style={[styles.saveButton, {backgroundColor: '#374151'}]} onPress={handleResetAppData}><Text style={styles.saveButtonText}>Restablecer Todo</Text></TouchableOpacity>
           </View>
         )}
