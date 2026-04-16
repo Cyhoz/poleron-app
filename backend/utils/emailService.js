@@ -60,8 +60,9 @@ async function sendOrderEmail(orderData) {
         const pass = process.env.SMTP_PASS;
 
         if (!pass) {
-            console.error('❌ ERROR: SMTP_PASS no está definida en las variables de entorno.');
-            throw new Error('Configuración incompleta: Falta contraseña de Gmail (SMTP_PASS)');
+            console.error('❌ ERROR: SMTP_PASS no está definida.');
+            console.log('Variables disponibles:', Object.keys(process.env).filter(k => !k.includes('KEY') && !k.includes('AUTH'))); 
+            throw new Error(`Configuración incompleta: Falta SMTP_PASS. Variables detectadas: ${Object.keys(process.env).filter(k => !k.includes('SECRET') && !k.includes('PASS')).join(', ')}`);
         }
 
         const transporter = nodemailer.createTransport({
