@@ -15,7 +15,7 @@ async function sendOrderEmail(orderData) {
         const titleStyle = { font: { bold: true, size: 14 } };
         const headerStyle = { font: { bold: true }, fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE0E0E0' } } };
 
-        // 1. Datos del Solicitante (Requester)
+        // 1. Datos del Solicitante
         sheet.addRow(['DATOS DEL SOLICITANTE']).font = titleStyle;
         sheet.addRow(['Nombre', 'Apellido', 'Correo', 'Teléfono']);
         const reqInfo = orderData.requesterInfo || {};
@@ -25,9 +25,9 @@ async function sendOrderEmail(orderData) {
             reqInfo.email || 'N/A',
             reqInfo.telefono || 'N/A'
         ]);
-        sheet.addRow([]); // Espacio
+        sheet.addRow([]);
 
-        // 2. Datos del Grupo (si aplica)
+        // 2. Datos del Grupo
         if (orderData.type === 'GROUP_ORDER') {
             sheet.addRow(['DATOS DEL GRUPO']).font = titleStyle;
             sheet.addRow(['Colegio', 'Curso', 'Región', 'Ciudad']);
@@ -46,88 +46,66 @@ async function sendOrderEmail(orderData) {
         sheet.addRow(['Producto', orderData.producto || 'Polerón']);
         sheet.addRow(['Fecha', new Date(orderData.date).toLocaleString()]);
         sheet.addRow([]);
-
         sheet.addRow(['#', 'Nombre', 'Apellido', 'Apodo', 'Talla']).font = headerStyle;
         
         const list = orderData.estudiantes || [];
         list.forEach((s, i) => {
-            sheet.addRow([
-                i + 1,
-                s.nombre || '',
-                s.apellido || '',
-                s.apodo || '',
-                s.talla || ''
-            ]);
+            sheet.addRow([i + 1, s.nombre || '', s.apellido || '', s.apodo || '', s.talla || '']);
         });
 
-        // 4. Totales
-        sheet.addRow([]);
-        sheet.addRow(['CANTIDAD TOTAL', orderData.cantidadTotal || list.length]);
-
-        // Ajustar ancho de columnas
-        sheet.columns.forEach(column => {
-            column.width = 20;
-        });
-
-        // Generar Buffer del Excel
         const buffer = await workbook.xlsx.writeBuffer();
 
-        // CONFIGURACIÓN DE NODEMAILER (Puerto 587 es el estándar para TLS en nubes)
+        // CONFIGURACIÓN DE NODEMAILER
+        // Usamos service: 'gmail' para que nodemailer maneje los puertos automáticamente
         const transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 587,
-            secure: false, // Usar STARTTLS
+            service: 'gmail',
             auth: {
                 user: process.env.SMTP_USER || 'inzunzajuan202@gmail.com',
                 pass: process.env.SMTP_PASS 
-            },
-            tls: {
-                // Configuración necesaria para algunos proveedores de hosting como Render
-                rejectUnauthorized: false
             }
         });
+
+        // Verificación rápida del transporte
+        try {
+            await transporter.verify();
+            console.log('✅ Conexión SMTP verificada');
+        } catch (vError) {
+            console.error('❌ Error de Verificación SMTP:', vError.message);
+            throw new Error(`Fallo de conexión SMTP: ${vError.message}`);
+        }
 
         const adminEmail = process.env.ADMIN_EMAIL || 'inzunzajuan202@gmail.com';
         const requesterName = reqInfo.nombre ? `${reqInfo.nombre} ${reqInfo.apellido}` : 'Un cliente';
 
         const mailOptions = {
-            from: `"App Poleron Orders" <${process.env.SMTP_USER || 'inzunzajuan202@gmail.com'}>`,
+            from: `"App Poleron" <${process.env.SMTP_USER || 'inzunzajuan202@gmail.com'}>`,
             to: adminEmail,
-            subject: `Pedido de Poleron Nuevo - ${requesterName} (${orderData.groupInfo?.colegio || 'Venta Local'})`,
-            text: `Se ha recibido un nuevo pedido grupal.\n\nSolicitante: ${requesterName}\nColegio: ${orderData.groupInfo?.colegio || 'N/A'}\nCurso: ${orderData.groupInfo?.curso || 'N/A'}\n\nAdjunto encontrarás el detalle en Excel.`,
+            subject: `Pedido Poleron - ${requesterName} - ${orderData.groupInfo?.colegio || 'Personal'}`,
+            text: `Nuevo pedido de ${requesterName}.\nColegio: ${orderData.groupInfo?.colegio || 'N/A'}\nAdjunto tabla de tallas.`,
             attachments: [
                 {
-                    filename: `Pedido_${orderData.groupInfo?.colegio || 'SinColegio'}_${Date.now()}.xlsx`,
+                    filename: `Pedido_${Date.now()}.xlsx`,
                     content: buffer
                 }
             ]
         };
 
-        // Adjuntar archivos de diseño (múltiples)
-        if (orderData.disenos && Array.isArray(orderData.disenos)) {
+        // Adjuntar diseños
+        if (orderData.disenos) {
             orderData.disenos.forEach((file, index) => {
                 if (file.base64) {
                     mailOptions.attachments.push({
-                        filename: file.name || `archivo_${index + 1}`,
+                        filename: file.name || `diseno_${index + 1}.png`,
                         content: file.base64,
-                        encoding: 'base64',
-                        contentType: file.mimeType
+                        encoding: 'base64'
                     });
                 }
             });
         }
 
-        // Mantener compatibilidad con pedidos individuales viejos
-        if (orderData.disenoBase64) {
-            mailOptions.attachments.push({
-                filename: 'diseno_principal.png',
-                content: orderData.disenoBase64,
-                encoding: 'base64'
-            });
-        }
-
-        await transporter.sendMail(mailOptions);
-        console.log('✅ Email enviado con éxito a:', adminEmail);
+        const info = await transporter.sendMail(mailOptions);
+        console.log('✅ Email enviado:', info.messageId);
+        return true;
         
     } catch (error) {
         console.error('❌ Error en sendOrderEmail:', error);

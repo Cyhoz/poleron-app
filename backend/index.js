@@ -40,23 +40,21 @@ const swaggerOptions = {
 const swaggerDocs = swaggerJsdoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
 
-app.set('trust proxy', 1);
+app.set('trust proxy', 1); // Necesario para express-rate-limit en Render
 const PORT = process.env.PORT || 10000; // Render usa el puerto 10000 por defecto
 
-app.use(helmet()); // Seguridad de headers HTTP
+app.use(helmet()); 
 app.use(cors());
-app.use(express.json({ limit: '50mb' })); // Aumentamos el límite para permitir múltiples archivos adjuntos
+app.use(express.json({ limit: '50mb' })); 
 
-// Limitador de peticiones para evitar fuerza bruta y DoS
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutos
-    max: 100, // Máximo 100 peticiones por ventana desde una IP
+    windowMs: 15 * 60 * 1000, 
+    max: 1000, 
     message: { error: 'Demasiadas peticiones, por favor intenta más tarde.' }
 });
 
 app.use('/api/', limiter);
 
-// Endpoint para verificar salud del server
 app.get('/', (req, res) => {
     res.send('Backend Poleron API - Funcionando');
 });
@@ -105,55 +103,26 @@ app.get('/', (req, res) => {
 app.get('/api/schools', async (req, res) => {
     try {
         let { comuna, region, query, limit = 50 } = req.query;
-        
-        // Sanitización de parámetros de búsqueda (Prevenir Inyecciones NoSQL)
         comuna = typeof comuna === 'string' ? comuna.trim() : null;
         region = typeof region === 'string' ? region.trim() : null;
         query = typeof query === 'string' ? query.trim() : null;
 
         let schoolsRef = db.collection('schools');
-        
-        // Aplicar filtros básicos si existen
-        if (region) {
-            schoolsRef = schoolsRef.where('region', '==', region.toUpperCase());
-        }
-        if (comuna) {
-            schoolsRef = schoolsRef.where('comuna', '==', comuna.toUpperCase());
-        }
+        if (region) schoolsRef = schoolsRef.where('region', '==', region.toUpperCase());
+        if (comuna) schoolsRef = schoolsRef.where('comuna', '==', comuna.toUpperCase());
 
         const snapshot = await schoolsRef.limit(parseInt(limit)).get();
         let schools = [];
-        
-        snapshot.forEach(doc => {
-            schools.push({ id: doc.id, ...doc.data() });
-        });
+        snapshot.forEach(doc => { schools.push({ id: doc.id, ...doc.data() }); });
 
-        // Filtrado por texto (búsqueda por nombre) simple en el servidor si se requiere
         if (query) {
             const searchTerm = query.toLowerCase();
             schools = schools.filter(s => s.nombre.toLowerCase().includes(searchTerm));
         }
-
         res.json(schools);
     } catch (error) {
         console.error('Error al obtener colegios:', error);
         res.status(500).json({ error: 'Error interno del servidor' });
-    }
-});
-
-/**
- * GET /api/schools/:rbd
- * Obtiene un colegio específico por su RBD
- */
-app.get('/api/schools/:id', async (req, res) => {
-    try {
-        const schoolDoc = await db.collection('schools').doc(req.params.id).get();
-        if (!schoolDoc.exists) {
-            return res.status(404).json({ error: 'Colegio no encontrado' });
-        }
-        res.json({ id: schoolDoc.id, ...schoolDoc.data() });
-    } catch (error) {
-        res.status(500).json({ error: 'Error al obtener el colegio' });
     }
 });
 
@@ -187,18 +156,12 @@ app.get('/api/validate-name', async (req, res) => {
 
     try {
         const nameUpper = name.toUpperCase().trim();
-        
-        // 1. Primero intentar buscar en la colección de Firestore (nombres añadidos por admin)
         const nameDoc = await db.collection('valid_names').doc(nameUpper).get();
         if (nameDoc.exists) {
             return res.json({ isValid: true });
         }
-
-        // 2. Si no está en Firestore, opcionalmente podrías seguir usando el JSON de respaldo 
-        // para nombres comunes para no sobrecargar la DB con nombres básicos.
         const chileanNames = require('./data/chilean_names.json');
         const isValidInJson = chileanNames.includes(nameUpper);
-        
         res.json({ isValid: isValidInJson });
     } catch (error) {
         console.error('Error validando nombre:', error);
@@ -220,7 +183,7 @@ app.get('/api/validate-name', async (req, res) => {
  *             type: object
  *             required:
  *               - type
- *               - recruiterInfo
+ *               - requesterInfo
  *             properties:
  *               type:
  *                 type: string
@@ -247,7 +210,7 @@ app.post('/api/orders', async (req, res) => {
     try {
         const orderData = req.body;
         
-        // 1. Cifrado de datos PII (Personally Identifiable Information)
+        // 1. Cifrado
         if (orderData.personalInfo && !orderData.isEncrypted) {
             orderData.personalInfo.nombre = encrypt(orderData.personalInfo.nombre);
             orderData.personalInfo.apellido = encrypt(orderData.personalInfo.apellido);
@@ -280,11 +243,13 @@ app.post('/api/orders', async (req, res) => {
 
         orderData.isEncrypted = true;
 
-        // NOTA: Para el envío de correo y notificación, necesitamos descifrar temporalmente
+        // 2. Descifrado temporal para correo
         const decryptedOrderData = JSON.parse(JSON.stringify(orderData));
         if (decryptedOrderData.requesterInfo) {
             decryptedOrderData.requesterInfo.nombre = decrypt(decryptedOrderData.requesterInfo.nombre);
             decryptedOrderData.requesterInfo.apellido = decrypt(decryptedOrderData.requesterInfo.apellido);
+            decryptedOrderData.requesterInfo.email = decrypt(decryptedOrderData.requesterInfo.email);
+            decryptedOrderData.requesterInfo.telefono = decrypt(decryptedOrderData.requesterInfo.telefono);
         }
         if (decryptedOrderData.estudiantes) {
             decryptedOrderData.estudiantes = decryptedOrderData.estudiantes.map(s => ({
@@ -301,32 +266,28 @@ app.post('/api/orders', async (req, res) => {
             }));
         }
 
-        // --- OPTIMIZACIÓN FIRESTORE (Límite 1MB) ---
-        // Creamos una copia para guardar en BD que NO tenga el base64 pesado
+        // 3. Optimización Firestore
         const firestoreData = JSON.parse(JSON.stringify(orderData));
         if (firestoreData.disenos) {
-            firestoreData.disenos = firestoreData.disenos.map(f => ({
-                ...f,
-                base64: "[CONTENIDO_PESADO_EN_CORREO]" // No guardamos el binario en Firestore para no bloquear el sistema
-            }));
+            firestoreData.disenos = firestoreData.disenos.map(f => ({ ...f, base64: "[CONTENIDO_PESADO_EN_CORREO]" }));
         }
-        if (firestoreData.disenoBase64) {
-            firestoreData.disenoBase64 = "[CONTENIDO_PESADO_EN_CORREO]";
-        }
+        if (firestoreData.disenoBase64) firestoreData.disenoBase64 = "[CONTENIDO_PESADO_EN_CORREO]";
 
         const docRef = await db.collection('orders').add({
             ...firestoreData,
             date: new Date().toISOString()
         });
 
-        // --- ENVIAR CORREO CON EXCEL (Usamos los datos completos) ---
+        // 4. Envío de Correo
+        let emailResult = { success: true };
         try {
             await sendOrderEmail(decryptedOrderData);
         } catch (emailError) {
             console.error('❌ ERROR CRÍTICO ENVIANDO EMAIL:', emailError);
+            emailResult = { success: false, error: emailError.message || 'Error desconocido' };
         }
 
-        // --- NOTIFICACIÓN PUSH ---
+        // 5. Notificación Push
         try {
             const adminConfig = await db.collection('config').doc('admin').get();
             if (adminConfig.exists) {
@@ -335,7 +296,6 @@ app.post('/api/orders', async (req, res) => {
                     const requesterName = decryptedOrderData.requesterInfo 
                         ? `${decryptedOrderData.requesterInfo.nombre} ${decryptedOrderData.requesterInfo.apellido}`
                         : (decryptedOrderData.personalInfo ? decryptedOrderData.personalInfo.nombre : 'Alguien');
-                    
                     const courseName = orderData.groupInfo?.curso || orderData.personalInfo?.curso || 'N/A';
 
                     await axios.post('https://exp.host/--/api/v2/push/send', {
@@ -344,7 +304,6 @@ app.post('/api/orders', async (req, res) => {
                         body: `Nuevo pedido de ${requesterName} para el curso ${courseName}.`,
                         sound: 'default',
                         priority: 'high',
-                        channelId: 'default',
                         data: { type: 'NEW_ORDER', orderId: docRef.id }
                     });
                 }
@@ -353,7 +312,7 @@ app.post('/api/orders', async (req, res) => {
             console.error('Error enviando notificación push:', pushError.message);
         }
 
-        res.json({ success: true, id: docRef.id });
+        res.json({ success: true, id: docRef.id, emailStatus: emailResult });
     } catch (error) {
         console.error('Error al guardar pedido:', error);
         res.status(500).json({ error: 'No se pudo procesar el pedido' });
@@ -369,29 +328,18 @@ app.post('/api/orders', async (req, res) => {
  *     responses:
  *       200:
  *         description: Lista de pedidos detallada y descifrada.
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
  */
 app.get('/api/admin/orders', async (req, res) => {
     try {
-        // En producción, aquí validaríamos un Header de autorización (Bearer Token)
         const snapshot = await db.collection('orders').orderBy('date', 'desc').get();
         const orders = [];
-
         snapshot.forEach(doc => {
             const data = doc.data();
             const order = { id: doc.id, ...data };
-
             if (data.isEncrypted) {
                 if (order.personalInfo) {
                     order.personalInfo.nombre = decrypt(order.personalInfo.nombre);
                     order.personalInfo.apellido = decrypt(order.personalInfo.apellido);
-                    if (order.personalInfo.rut) order.personalInfo.rut = decrypt(order.personalInfo.rut);
-                    if (order.personalInfo.apodo) order.personalInfo.apodo = decrypt(order.personalInfo.apodo);
                 }
                 if (order.requesterInfo) {
                     order.requesterInfo.nombre = decrypt(order.requesterInfo.nombre);
@@ -399,7 +347,7 @@ app.get('/api/admin/orders', async (req, res) => {
                     order.requesterInfo.email = decrypt(order.requesterInfo.email);
                     order.requesterInfo.telefono = decrypt(order.requesterInfo.telefono);
                 }
-                if (order.estudiantes && Array.isArray(order.estudiantes)) {
+                if (order.estudiantes) {
                     order.estudiantes = order.estudiantes.map(s => ({
                         ...s,
                         nombre: decrypt(s.nombre),
@@ -407,48 +355,23 @@ app.get('/api/admin/orders', async (req, res) => {
                         apodo: s.apodo ? decrypt(s.apodo) : ''
                     }));
                 }
-                if (order.disenos && Array.isArray(order.disenos)) {
-                    order.disenos = order.disenos.map(f => ({
-                        ...f,
-                        base64: decrypt(f.base64)
-                    }));
-                }
             }
             orders.push(order);
         });
-
         res.json(orders);
     } catch (error) {
-        console.error('Error al obtener pedidos para admin:', error);
+        console.error('Error obteniendo pedidos admin:', error);
         res.status(500).json({ error: 'No se pudieron recuperar los pedidos' });
     }
 });
 
-/**
- * @swagger
- * /api/products:
- *   get:
- *     summary: Obtiene el catálogo de productos
- *     description: Retorna los productos disponibles para pedido (polerones base, premium, etc.).
- *     responses:
- *       200:
- *         description: Catálogo de productos.
- */
 app.get('/api/products', async (req, res) => {
     try {
         const snapshot = await db.collection('products').get();
         const products = [];
         snapshot.forEach(doc => products.push({ id: doc.id, ...doc.data() }));
-        
-        // Si no hay productos, devolvemos uno base
         if (products.length === 0) {
-            return res.json([{
-                id: 'poleron-base',
-                nombre: 'Polerón Generación 2026',
-                precioTotal: 45000,
-                montoReserva: 15000,
-                descripcion: 'Polerón de algodón premium con bordado personalizado.'
-            }]);
+            return res.json([{ id: 'poleron-base', nombre: 'Polerón Generación 2026', precioTotal: 45000 }]);
         }
         res.json(products);
     } catch (error) {
@@ -456,7 +379,6 @@ app.get('/api/products', async (req, res) => {
     }
 });
 
-
 app.listen(PORT, () => {
-    console.log(`Servidor ejecutándose en http://localhost:${PORT}`);
+    console.log(`Servidor ejecutándose en puerto ${PORT}`);
 });
