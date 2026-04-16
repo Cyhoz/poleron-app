@@ -7,10 +7,40 @@ const { db } = require('./firebase');
 const { encrypt, decrypt } = require('./utils/encryption');
 const axios = require('axios');
 const { sendOrderEmail } = require('./utils/emailService');
+const swaggerUi = require('swagger-ui-express');
+const swaggerJsdoc = require('swagger-jsdoc');
 
 dotenv.config();
 
 const app = express();
+
+// --- CONFIGURACIÓN SWAGGER ---
+const swaggerOptions = {
+    definition: {
+        openapi: '3.0.0',
+        info: {
+            title: 'Poleron App API',
+            version: '1.0.0',
+            description: 'Documentación oficial de la API para la gestión de pedidos de Polerón. Incluye endpoints para pedidos cifrados, búsqueda de colegios y validaciones de identidad.',
+            contact: {
+                name: 'Soporte Poleron App',
+                email: 'inzunzajuan202@gmail.com'
+            }
+        },
+        servers: [
+            {
+                url: process.env.RENDER_EXTERNAL_URL || 'http://localhost:10000',
+                description: 'Servidor de Producción'
+            }
+        ]
+    },
+    apis: ['./index.js'], // Buscamos JSDoc en este mismo archivo
+};
+
+const swaggerDocs = swaggerJsdoc(swaggerOptions);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+
+app.set('trust proxy', 1);
 const PORT = process.env.PORT || 10000; // Render usa el puerto 10000 por defecto
 
 app.use(helmet()); // Seguridad de headers HTTP
@@ -32,9 +62,45 @@ app.get('/', (req, res) => {
 });
 
 /**
- * GET /api/schools
- * Obtiene lista de colegios con filtros opcionales
- * query params: comuna, region, query (búsqueda por nombre)
+ * @swagger
+ * /api/schools:
+ *   get:
+ *     summary: Obtiene lista de colegios
+ *     description: Retorna una lista de instituciones educativas filtradas por comuna, región o búsqueda por nombre.
+ *     parameters:
+ *       - in: query
+ *         name: query
+ *         schema:
+ *           type: string
+ *         description: Texto para buscar colegios por nombre.
+ *       - in: query
+ *         name: comuna
+ *         schema:
+ *           type: string
+ *         description: Nombre de la comuna en mayúsculas.
+ *       - in: query
+ *         name: region
+ *         schema:
+ *           type: string
+ *         description: Nombre de la región en mayúsculas.
+ *     responses:
+ *       200:
+ *         description: Lista de colegios recuperada con éxito.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
+ *                 properties:
+ *                   id:
+ *                     type: string
+ *                   nombre:
+ *                     type: string
+ *                   comuna:
+ *                     type: string
+ *                   region:
+ *                     type: string
  */
 app.get('/api/schools', async (req, res) => {
     try {
@@ -92,8 +158,28 @@ app.get('/api/schools/:id', async (req, res) => {
 });
 
 /**
- * GET /api/validate-name
- * Valida si un nombre existe en la base de datos de nombres reales de Chile en Firestore
+ * @swagger
+ * /api/validate-name:
+ *   get:
+ *     summary: Valida un nombre de identidad
+ *     description: Verifica si un nombre y apellido figuran en la base de datos de "nombres reales" autorizados para el sistema.
+ *     parameters:
+ *       - in: query
+ *         name: name
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Nombre completo a validar (Nombre + Apellido).
+ *     responses:
+ *       200:
+ *         description: Resultado de la validación.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 isValid:
+ *                   type: boolean
  */
 app.get('/api/validate-name', async (req, res) => {
     const { name } = req.query;
@@ -121,8 +207,41 @@ app.get('/api/validate-name', async (req, res) => {
 });
 
 /**
- * POST /api/orders
- * Guarda un pedido cifrando los datos sensibles (PII)
+ * @swagger
+ * /api/orders:
+ *   post:
+ *     summary: Registra un nuevo pedido
+ *     description: Recibe los datos del pedido (individual o grupal), cifra la información sensible y la guarda en la base de datos. Dispara el envío de correo y notificación push.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - type
+ *               - recruiterInfo
+ *             properties:
+ *               type:
+ *                 type: string
+ *                 enum: [PERSONAL_ORDER, GROUP_ORDER]
+ *               personalInfo:
+ *                 type: object
+ *               groupInfo:
+ *                 type: object
+ *               estudiantes:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *               disenos:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *     responses:
+ *       200:
+ *         description: Pedido procesado y guardado correctamente.
+ *       500:
+ *         description: Error interno del servidor.
  */
 app.post('/api/orders', async (req, res) => {
     try {
@@ -204,7 +323,7 @@ app.post('/api/orders', async (req, res) => {
         try {
             await sendOrderEmail(decryptedOrderData);
         } catch (emailError) {
-            console.error('Error enviando email con Excel:', emailError.message);
+            console.error('❌ ERROR CRÍTICO ENVIANDO EMAIL:', emailError);
         }
 
         // --- NOTIFICACIÓN PUSH ---
@@ -242,9 +361,20 @@ app.post('/api/orders', async (req, res) => {
 });
 
 /**
- * GET /api/admin/orders
- * Obtiene todos los pedidos, descifrando los campos automágicamente.
- * Requiere una capa de seguridad adicional (ej: validación de token de admin)
+ * @swagger
+ * /api/admin/orders:
+ *   get:
+ *     summary: Recupera todos los pedidos (Vista Admin)
+ *     description: Retorna la lista completa de pedidos registrados, descifrando automáticamente la información sensible para el uso administrativo.
+ *     responses:
+ *       200:
+ *         description: Lista de pedidos detallada y descifrada.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: array
+ *               items:
+ *                 type: object
  */
 app.get('/api/admin/orders', async (req, res) => {
     try {
@@ -295,8 +425,14 @@ app.get('/api/admin/orders', async (req, res) => {
 });
 
 /**
- * GET /api/products
- * Obtiene el catálogo de productos (ej: Polerón Base, Polerón Premium)
+ * @swagger
+ * /api/products:
+ *   get:
+ *     summary: Obtiene el catálogo de productos
+ *     description: Retorna los productos disponibles para pedido (polerones base, premium, etc.).
+ *     responses:
+ *       200:
+ *         description: Catálogo de productos.
  */
 app.get('/api/products', async (req, res) => {
     try {

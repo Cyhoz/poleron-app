@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView,
-  Alert, ActivityIndicator, Modal, FlatList, Image
+  Alert, ActivityIndicator, Modal, FlatList, Image, Linking
 } from 'react-native';
-import { UploadCloud, X, Plus, Trash2, ChevronDown, User, Phone, Mail, FileText, File } from 'lucide-react-native';
+import { UploadCloud, X, Plus, Trash2, ChevronDown, User, Phone, Mail, FileText, File, MessageCircle } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { REGIONES, CURSOS, COLEGIOS_REALES } from '../constants/chileData';
 import {
   saveOrder, getAdminSizes, subscribeToAppData,
-  getProducts, subscribeToValidNames, getUserProfile, getCalculatorResultsByCourse
+  getProducts, subscribeToValidNames, getUserProfile, getCalculatorResultsByCourse,
+  normalizeName
 } from '../services/firebaseOrderService';
 import { auth } from '../services/firebaseConfig';
 
@@ -49,6 +50,7 @@ export default function TeacherOrderScreen({ navigation }) {
   const [filteredSchools, setFilteredSchools] = useState([]);
   const [showSchoolResults, setShowSchoolResults] = useState(false);
   const [validNames, setValidNames] = useState([]);
+  const [whatsappNumber, setWhatsappNumber] = useState('');
 
   useEffect(() => {
     if (!auth.currentUser) {
@@ -86,12 +88,28 @@ export default function TeacherOrderScreen({ navigation }) {
     };
 
     const unsubValidNames = subscribeToValidNames((names) => {
-      setValidNames(names.map(n => n.toUpperCase()));
+      setValidNames(names.map(n => normalizeName(n)));
+    });
+
+    const unsubWhatsApp = subscribeToAppData((data) => {
+      if (data?.whatsappSupport) setWhatsappNumber(data.whatsappSupport);
     });
 
     initData();
-    return () => unsubValidNames();
+    return () => {
+      unsubValidNames();
+      unsubWhatsApp();
+    };
   }, [navigation]);
+
+  const openSoporteWhatsApp = () => {
+    const phone = whatsappNumber || '+56900000000';
+    const msg = `Hola, soy el encargado de ${groupInfo.curso || 'mi curso'} (${groupInfo.colegio || 'mi colegio'}) y necesito ayuda con el pedido grupal en la app Polerón.`;
+    const url = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(msg)}`;
+    Linking.openURL(url).catch(() => {
+      Linking.openURL(`https://wa.me/${phone.replace('+', '')}?text=${encodeURIComponent(msg)}`);
+    });
+  };
 
   const updateGroupInfo = (field, value) => {
     setGroupInfo(prev => ({ ...prev, [field]: value }));
@@ -152,9 +170,14 @@ export default function TeacherOrderScreen({ navigation }) {
       return;
     }
     if (validNames.length > 0) {
-      const nameToCheck = currentStudent.nombre.toUpperCase().trim();
+      const fullName = `${currentStudent.nombre} ${currentStudent.apellido}`;
+      const nameToCheck = normalizeName(fullName);
+      
       if (!validNames.includes(nameToCheck)) {
-        Alert.alert('Nombre No Autorizado', `El nombre "${currentStudent.nombre}" no está en la lista oficial.`);
+        Alert.alert(
+          'Nombre No Autorizado', 
+          `El nombre "${fullName}" no está en la lista oficial. Solo puedes agregar alumnos autorizados por la administración.`
+        );
         return;
       }
     }
@@ -217,27 +240,41 @@ export default function TeacherOrderScreen({ navigation }) {
       if (results.length === 0) {
         Alert.alert('Sin Datos', 'No se encontraron alumnos de este curso que hayan usado la calculadora aún.');
       } else {
+        // BLINDAJE: Filtrar solo los nombres autorizados
+        const authorizedResults = results.filter(res => {
+          const fullName = `${res.userName}`;
+          return validNames.includes(normalizeName(fullName));
+        });
+
+        if (authorizedResults.length < results.length) {
+          Alert.alert(
+            'Alumnos Filtrados', 
+            `Se detectaron ${results.length} resultados, pero solo ${authorizedResults.length} están en la lista oficial. Solo estos han sido importados.`
+          );
+        }
+
         // Mapear resultados al formato de la lista de estudiantes
-        const importedStudents = results.map(r => ({
-          id: r.id,
+        const importedStudents = authorizedResults.map(r => ({
+          id: r.id || Date.now().toString() + Math.random(),
           nombre: r.userName.split(' ')[0],
           apellido: r.userName.split(' ').slice(1).join(' '),
           apodo: '',
-          talla: r.size
+          talla: r.size || 'S'
         }));
         
         // Evitar duplicados (por nombre completo)
-        const currentNames = students.map(s => `${s.nombre} ${s.apellido}`);
-        const newOnes = importedStudents.filter(s => !currentNames.includes(`${s.nombre} ${s.apellido}`));
+        const currentNames = students.map(s => normalizeName(`${s.nombre} ${s.apellido}`));
+        const newOnes = importedStudents.filter(s => !currentNames.includes(normalizeName(`${s.nombre} ${s.apellido}`)));
         
-        if (newOnes.length === 0) {
-          Alert.alert('Información', 'Todos los alumnos disponibles ya están en la lista.');
-        } else {
+        if (newOnes.length === 0 && results.length > 0) {
+          Alert.alert('Información', 'Todos los alumnos autorizados ya están en la lista.');
+        } else if (newOnes.length > 0) {
           setStudents([...students, ...newOnes]);
           Alert.alert('Éxito', `Se han importado ${newOnes.length} alumnos correctamente.`);
         }
       }
     } catch (error) {
+      console.error(error);
       Alert.alert('Error', 'No se pudieron importar los datos.');
     } finally {
       setIsImporting(false);
@@ -518,6 +555,15 @@ export default function TeacherOrderScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+
+      {/* BOTÓN FLOTANTE WHATSAPP */}
+      <TouchableOpacity 
+        style={styles.whatsappFab} 
+        onPress={openSoporteWhatsApp}
+        activeOpacity={0.8}
+      >
+        <MessageCircle color="#fff" size={30} />
+      </TouchableOpacity>
     </ScrollView>
   );
 }
@@ -550,6 +596,25 @@ const styles = StyleSheet.create({
   addStudentBox: { backgroundColor: '#1E293B', padding: 15, borderRadius: 15, borderWidth: 1, borderColor: '#334155', marginBottom: 25 },
   addButton: { backgroundColor: '#3B82F6', padding: 12, borderRadius: 10, alignItems: 'center', marginTop: 15, flexDirection: 'row', justifyContent: 'center' },
   cartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+  whatsappFab: {
+    position: 'absolute',
+    bottom: 30,
+    right: 20,
+    backgroundColor: '#25D366',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
+    borderWidth: 2,
+    borderColor: '#FFFFFF40',
+    zIndex: 100
+  },
   cartTitle: { color: '#F1F5F9', fontSize: 18, fontWeight: 'bold' },
   studentItem: { backgroundColor: '#1E293B', padding: 15, borderRadius: 12, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 1, borderColor: '#334155' },
   studentName: { color: '#F1F5F9', fontWeight: 'bold', fontSize: 16 },

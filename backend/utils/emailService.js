@@ -72,16 +72,18 @@ async function sendOrderEmail(orderData) {
         // Generar Buffer del Excel
         const buffer = await workbook.xlsx.writeBuffer();
 
-        // CONFIGURACIÓN DE NODEMAILER (SSL/TLS para máxima seguridad)
+        // CONFIGURACIÓN DE NODEMAILER (Puerto 587 es el estándar para TLS en nubes)
         const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            secure: true, // Forzamos el uso de una conexión segura
+            host: 'smtp.gmail.com',
+            port: 587,
+            secure: false, // Usar STARTTLS
             auth: {
                 user: process.env.SMTP_USER || 'inzunzajuan202@gmail.com',
                 pass: process.env.SMTP_PASS 
             },
             tls: {
-                rejectUnauthorized: true // Verificar certificados para prevenir ataques Man-in-the-Middle
+                // Configuración necesaria para algunos proveedores de hosting como Render
+                rejectUnauthorized: false
             }
         });
 

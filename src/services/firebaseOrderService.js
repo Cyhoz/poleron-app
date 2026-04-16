@@ -186,6 +186,36 @@ export const getProducts = async () => {
 
 // --- Manejo de Nombres Autorizados ---
 
+export const normalizeName = (name) => {
+  if (!name) return "";
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // Quitar acentos
+    .toUpperCase()
+    .trim()
+    .replace(/\s+/g, ' '); // Unificar espacios extra
+};
+
+export const checkNameAuthorized = async (fullName) => {
+  try {
+    const normalizedInput = normalizeName(fullName);
+    const q = query(collection(db, "valid_names"));
+    const snapshot = await getDocs(q);
+    
+    let isAuthorized = false;
+    snapshot.forEach((doc) => {
+      const normalizedValid = normalizeName(doc.id);
+      if (normalizedValid === normalizedInput) isAuthorized = true;
+    });
+    
+    return isAuthorized;
+  } catch (error) {
+    console.error("Error verificando autorización de nombre:", error);
+    return false;
+  }
+};
+
+
 export const saveValidName = async (name) => {
   try {
     const nameUpper = name.toUpperCase().trim();

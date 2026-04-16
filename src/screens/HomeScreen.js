@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, Dimensions, Image, ScrollView } from 'react-native';
-import { Settings, LogOut, User, Calculator, ShoppingBag, LayoutDashboard } from 'lucide-react-native';
+import { Settings, LogOut, User, Calculator, ShoppingBag, LayoutDashboard, MessageCircle } from 'lucide-react-native';
 import { auth } from '../services/firebaseConfig';
 import { signOut, onAuthStateChanged } from 'firebase/auth';
-import { getUserProfile } from '../services/firebaseOrderService';
-import { Alert, ActivityIndicator } from 'react-native';
+import { getUserProfile, subscribeToAppData } from '../services/firebaseOrderService';
+import { Alert, ActivityIndicator, Linking } from 'react-native';
 
 const { width } = Dimensions.get('window');
 
@@ -12,9 +12,10 @@ export default function HomeScreen({ navigation }) {
   const [user, setUser] = React.useState(auth.currentUser);
   const [profile, setProfile] = React.useState(null);
   const [isLoading, setIsLoading] = React.useState(true);
+  const [appConfig, setAppConfig] = React.useState(null);
 
   React.useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currUser) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currUser) => {
       setUser(currUser);
       if (currUser) {
         setIsLoading(true);
@@ -25,8 +26,32 @@ export default function HomeScreen({ navigation }) {
       }
       setIsLoading(false);
     });
-    return () => unsubscribe();
+
+    const unsubscribeData = subscribeToAppData((data) => {
+      if (data) setAppConfig(data);
+    });
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeData();
+    };
   }, []);
+
+  const openWhatsApp = (customMessage) => {
+    const phone = appConfig?.whatsappSupport || '+56900000000'; // Fallback
+    const defaultMsg = 'Hola, tengo una duda sobre la app Polerón.';
+    const text = customMessage || defaultMsg;
+    const url = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(text)}`;
+    
+    Linking.canOpenURL(url).then(supported => {
+      if (supported) {
+        Linking.openURL(url);
+      } else {
+        // Fallback to web link if app not installed
+        Linking.openURL(`https://wa.me/${phone.replace('+', '')}?text=${encodeURIComponent(text)}`);
+      }
+    }).catch(err => console.error('Error abriendo WhatsApp:', err));
+  };
 
   const handleAuthPress = () => {
     if (user) {
@@ -182,6 +207,15 @@ export default function HomeScreen({ navigation }) {
             <Text style={styles.footerText}>© 2024 Tu Polerón App</Text>
         </View>
       </ScrollView>
+
+      {/* BOTÓN FLOTANTE WHATSAPP */}
+      <TouchableOpacity 
+        style={styles.whatsappFab} 
+        onPress={openWhatsApp}
+        activeOpacity={0.8}
+      >
+        <MessageCircle color="#fff" size={30} />
+      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -381,4 +415,22 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#475569',
   },
+  whatsappFab: {
+    position: 'absolute',
+    bottom: 30,
+    right: 30,
+    backgroundColor: '#25D366',
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
+    borderWidth: 2,
+    borderColor: '#FFFFFF40'
+  }
 });

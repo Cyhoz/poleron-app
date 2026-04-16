@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { 
   View, Text, TextInput, TouchableOpacity, StyleSheet, 
-  ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView 
+  ActivityIndicator, Alert, KeyboardAvoidingView, Platform, ScrollView, Linking 
 } from 'react-native';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import { auth, db } from '../services/firebaseConfig';
 import { doc, setDoc } from 'firebase/firestore';
-import { LogIn, UserPlus, Mail, Lock, User, GraduationCap, School, BookOpen } from 'lucide-react-native';
-import { checkManagerExists, registerCourseManager } from '../services/firebaseOrderService';
+import { LogIn, UserPlus, Mail, Lock, User, GraduationCap, School, BookOpen, MessageCircle } from 'lucide-react-native';
+import { checkManagerExists, registerCourseManager, checkNameAuthorized, subscribeToAppData } from '../services/firebaseOrderService';
 import { CURSOS } from '../constants/chileData';
 
 export default function AuthScreen({ navigation }) {
@@ -20,6 +20,23 @@ export default function AuthScreen({ navigation }) {
   const [curso, setCurso] = useState('');
   const [loading, setLoading] = useState(false);
   const [showCoursePicker, setShowCoursePicker] = useState(false);
+  const [whatsappNumber, setWhatsappNumber] = useState('');
+
+  React.useEffect(() => {
+    const unsub = subscribeToAppData(data => {
+      if (data?.whatsappSupport) setWhatsappNumber(data.whatsappSupport);
+    });
+    return unsub;
+  }, []);
+
+  const openSoporteWhatsApp = () => {
+    const phone = whatsappNumber || '+56900000000';
+    const msg = `Hola, mi nombre es ${nombre || '[Tu Nombre]'} y no figuro en la lista oficial para registrarme en la app Polerón. ¿Me podrían ayudar?`;
+    const url = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(msg)}`;
+    Linking.openURL(url).catch(() => {
+      Linking.openURL(`https://wa.me/${phone.replace('+', '')}?text=${encodeURIComponent(msg)}`);
+    });
+  };
 
   const handleAuth = async () => {
     if (!email || !password || (!isLogin && (!nombre || !colegio || !curso))) {
@@ -32,6 +49,17 @@ export default function AuthScreen({ navigation }) {
       if (isLogin) {
         await signInWithEmailAndPassword(auth, email, password);
       } else {
+        // BLINDAJE: Verificar si el nombre está autorizado
+        const isAuthorized = await checkNameAuthorized(nombre);
+        if (!isAuthorized) {
+          Alert.alert(
+            'Nombre No Autorizado',
+            'Tu nombre no figura en la lista oficial proporcionada por la administración. Por favor, contacta a soporte por WhatsApp si crees que es un error.'
+          );
+          setLoading(false);
+          return;
+        }
+
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         const user = userCredential.user;
         
@@ -39,8 +67,6 @@ export default function AuthScreen({ navigation }) {
         if (role === 'manager') {
           const exists = await checkManagerExists(colegio, curso);
           if (exists) {
-            // Borrar el usuario de Auth si ya existe un manager (para permitir reintento con otros datos)
-            // Nota: En producción sería mejor validar ANTES de crear el usuario.
             await user.delete(); 
             Alert.alert('Error', `Ya existe un encargado registrado para el curso ${curso} de ${colegio}.`);
             setLoading(false);
@@ -59,17 +85,13 @@ export default function AuthScreen({ navigation }) {
           role: role
         });
       }
-      // La navegación se manejará automáticamente por el listener de estado en App.js o HomeScreen
-      navigation.replace('Home');
     } catch (error) {
       console.error(error);
-      let message = 'Error en la autenticación.';
-      if (error.code === 'auth/email-already-in-use') message = 'El correo ya está en uso.';
-      if (error.code === 'auth/wrong-password') message = 'Contraseña incorrecta.';
-      if (error.code === 'auth/user-not-found') message = 'Usuario no encontrado.';
-      if (error.code === 'auth/weak-password') message = 'La contraseña debe tener al menos 6 caracteres.';
-      
-      Alert.alert('Fallo', message);
+      let alertMsg = 'Ocurrió un error al procesar tu solicitud.';
+      if (error.code === 'auth/email-already-in-use') alertMsg = 'Este correo ya está registrado.';
+      if (error.code === 'auth/wrong-password') alertMsg = 'Contraseña incorrecta.';
+      if (error.code === 'auth/user-not-found') alertMsg = 'Usuario no encontrado.';
+      Alert.alert('Error', alertMsg);
     } finally {
       setLoading(false);
     }
@@ -77,22 +99,24 @@ export default function AuthScreen({ navigation }) {
 
   return (
     <KeyboardAvoidingView 
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'} 
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.headerBox}>
           <View style={styles.logoCircle}>
-             {isLogin ? <LogIn size={40} color="#3B82F6" /> : <UserPlus size={40} color="#10B981" />}
+            {isLogin ? <LogIn size={32} color="#3B82F6" /> : <UserPlus size={32} color="#10B981" />}
           </View>
-          <Text style={styles.title}>{isLogin ? '¡Bienvenido de Nuevo!' : 'Crea tu Cuenta'}</Text>
-          <Text style={styles.subtitle}>Inicia sesión para gestionar tus pedidos de polerones.</Text>
+          <Text style={styles.title}>{isLogin ? 'Bienvenido de Nuevo' : 'Crea tu Cuenta'}</Text>
+          <Text style={styles.subtitle}>
+            {isLogin ? 'Ingresa tus credenciales para continuar' : 'Únete a la plataforma oficial de tu generación'}
+          </Text>
         </View>
 
         <View style={styles.formCard}>
           {!isLogin && (
             <View style={styles.inputGroup}>
-              <Text style={styles.label}>Nombre Completo</Text>
+              <Text style={styles.label}>Nombre Completo (Real)</Text>
               <View style={styles.inputWrapper}>
                 <User size={20} color="#94A3B8" style={styles.icon} />
                 <TextInput 
@@ -204,14 +228,23 @@ export default function AuthScreen({ navigation }) {
             style={styles.switchButton} 
             onPress={() => setIsLogin(!isLogin)}
           >
-            <Text style={styles.switchText}>
-              {isLogin ? '¿No tienes cuenta? Registrate aquí' : '¿Ya tienes cuenta? Inicia sesión'}
+            <Text style={styles.footerText}>
+              {isLogin ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}
+            </Text>
+            <Text style={styles.footerLink}>
+              {isLogin ? 'Regístrate' : 'Inicia Sesión'}
             </Text>
           </TouchableOpacity>
+
+          {!isLogin && (
+            <TouchableOpacity style={styles.whatsappSupportBtn} onPress={openSoporteWhatsApp}>
+              <MessageCircle color="#25D366" size={20} style={{marginRight: 8}} />
+              <Text style={styles.whatsappSupportText}>¿No apareces en la lista? Contacta a soporte</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </ScrollView>
 
-      {/* Selector de Curso */}
       {showCoursePicker && (
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -262,8 +295,7 @@ const styles = StyleSheet.create({
   input: { flex: 1, color: '#F1F5F9', paddingVertical: 14, fontSize: 15 },
   mainButton: { borderRadius: 12, paddingVertical: 16, alignItems: 'center', marginTop: 10 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  switchButton: { marginTop: 20, alignItems: 'center' },
-  switchText: { color: '#38BDF8', fontSize: 14 },
+  switchButton: { marginTop: 20, alignItems: 'center', flexDirection: 'row', justifyContent: 'center' },
   roleContainer: { flexDirection: 'row', gap: 10, marginTop: 5 },
   roleOption: { 
     flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
@@ -272,6 +304,27 @@ const styles = StyleSheet.create({
   roleActive: { backgroundColor: '#3B82F6', borderColor: '#3B82F6' },
   roleText: { color: '#94A3B8', fontSize: 14, fontWeight: '500' },
   roleTextActive: { color: '#fff' },
+  footerText: { color: '#94A3B8', fontSize: 14 },
+  footerLink: {
+    color: '#3B82F6',
+    fontWeight: 'bold',
+    marginLeft: 5,
+  },
+  whatsappSupportBtn: {
+    marginTop: 25,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#334155',
+    width: '100%'
+  },
+  whatsappSupportText: {
+    color: '#94A3B8',
+    fontSize: 13,
+    fontWeight: '500'
+  },
   infoHint: { color: '#38BDF8', fontSize: 12, marginTop: 8, paddingHorizontal: 4 },
   modalOverlay: { 
     ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.8)', 
