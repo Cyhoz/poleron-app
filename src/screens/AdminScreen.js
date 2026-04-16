@@ -14,7 +14,7 @@ import {
   subscribeToOrders, saveAppData, getAppData, subscribeToAppData, 
   saveValidName, deleteValidName, subscribeToValidNames, 
   saveCommonName, deleteCommonName, subscribeToCommonNames,
-  saveCommonSurname, deleteCommonSurname, subscribeToCommonSurnames,
+  saveCommonSurname, deleteCommonSurname, subscribeToCommonSurnames, seedDictionaryBatch,
   getAllManagers, getUserProfile 
 } from '../services/firebaseOrderService';
 import { auth, db } from '../services/firebaseConfig';
@@ -114,6 +114,9 @@ export default function AdminScreen() {
   const [isSavingAppData, setIsSavingAppData] = useState(false);
   const [validNames, setValidNames] = useState([]);
   const [newValidName, setNewValidName] = useState('');
+  const [newTemplateText, setNewTemplateText] = useState('');
+  const [selectedOrderForWhatsApp, setSelectedOrderForWhatsApp] = useState(null);
+  const [isWhatsAppModalVisible, setIsWhatsAppModalVisible] = useState(false);
 
   const [commonNames, setCommonNames] = useState([]);
   const [newCommonName, setNewCommonName] = useState('');
@@ -134,10 +137,13 @@ export default function AdminScreen() {
           setAppData(data);
         } else {
           saveAppData({
-            schools: COLEGIOS_REALES,
-            courses: CURSOS,
-            regions: REGIONES,
-            whatsappSupport: '+56900000000'
+            whatsappSupport: '+56900000000',
+            whatsappTemplates: [
+              "Hola [NOMBRE], tu pedido de [COLEGIO] ha sido recibido correctamente. ¡Gracias!",
+              "Hola [NOMBRE], tenemos un detalle con el diseño de tu pedido. ¿Podemos hablar?",
+              "Tu pedido de polerón ya está listo para ser despachado. Atento a los tiempos de entrega.",
+              "Hola, necesitamos confirmar la talla de uno de los alumnos para proceder."
+            ]
           });
         }
       });
@@ -416,36 +422,39 @@ export default function AdminScreen() {
     setNewCommonSurname('');
   };
 
-  const handleSeedDictionary = async () => {
+  const executeSeeding = async () => {
+    setIsSeeding(true);
+    try {
+      const names = [
+        "MATEO", "SANTIAGO", "BENJAMIN", "LUCAS", "LIAM", "AGUSTIN", "VICENTE", "MAXIMILIANO", "JOAQUIN", "GASPAR",
+        "TOMAS", "JOSE", "JUAN", "LUIS", "CARLOS", "FRANCISCO", "ALONSO", "SEBASTIAN", "FACUNDO", "BASTIAN",
+        "MARTIN", "NICOLAS", "JAVIER", "DIEGO", "MATIAS", "IGNACIO", "FELIPE", "GABRIEL", "RODRIGO", "ALVARO",
+        "SOFIA", "EMMA", "EMILIA", "ISABELLA", "JULIETA", "TRINIDAD", "ISIDORA", "AGUSTINA", "JOSEFA", "LUCIANA",
+        "AMANDA", "ANTONIA", "FLORENCIA", "VALENTINA", "MARTINA", "MARIA", "ANA", "ELSA", "CARMEN", "PATRICIA"
+      ];
+      const surnames = [
+        "GONZALEZ", "MUÑOZ", "ROJAS", "DIAZ", "PEREZ", "SOTO", "CONTRERAS", "SILVA", "MARTINEZ", "SEPULVEDA",
+        "MORALES", "RODRIGUEZ", "LOPEZ", "FUENTES", "HERNANDEZ", "TORRES", "ARAYA", "FLORES", "CASTILLO", "ESPINOZA",
+        "VALENZUELA", "CASTRO", "REYES", "GUTIERREZ", "PIZARRO", "VASQUEZ", "TAPIA", "SANCHEZ", "VERA", "JARA"
+      ];
+
+      const success = await seedDictionaryBatch(names, surnames);
+      if (success) {
+        Alert.alert('Éxito', 'Diccionario base cargado correctamente.');
+      } else {
+        Alert.alert('Error', 'Fallo al cargar el diccionario.');
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Fallo al cargar el diccionario.');
+    } finally {
+      setIsSeeding(false);
+    }
+  };
+
+  const handleSeedDictionary = () => {
     Alert.alert('Poblar Diccionario', '¿Deseas cargar los ~1000 nombres y apellidos iniciales? Esto puede tomar un momento.', [
       { text: 'Cancelar' },
-      { text: 'Proceder', onPress: async () => {
-          setIsSeeding(true);
-          try {
-            // Importamos las listas dinámicamente o las definimos aquí para evitar dependencias
-            const names = [
-              "MATEO", "SANTIAGO", "BENJAMIN", "LUCAS", "LIAM", "AGUSTIN", "VICENTE", "MAXIMILIANO", "JOAQUIN", "GASPAR",
-              "TOMAS", "JOSE", "JUAN", "LUIS", "CARLOS", "FRANCISCO", "ALONSO", "SEBASTIAN", "FACUNDO", "BASTIAN",
-              "MARTIN", "NICOLAS", "JAVIER", "DIEGO", "MATIAS", "IGNACIO", "FELIPE", "GABRIEL", "RODRIGO", "ALVARO",
-              "SOFIA", "EMMA", "EMILIA", "ISABELLA", "JULIETA", "TRINIDAD", "ISIDORA", "AGUSTINA", "JOSEFA", "LUCIANA",
-              "AMANDA", "ANTONIA", "FLORENCIA", "VALENTINA", "MARTINA", "MARIA", "ANA", "ELSA", "CARMEN", "PATRICIA"
-            ];
-            const surnames = [
-              "GONZALEZ", "MUÑOZ", "ROJAS", "DIAZ", "PEREZ", "SOTO", "CONTRERAS", "SILVA", "MARTINEZ", "SEPULVEDA",
-              "MORALES", "RODRIGUEZ", "LOPEZ", "FUENTES", "HERNANDEZ", "TORRES", "ARAYA", "FLORES", "CASTILLO", "ESPINOZA",
-              "VALENZUELA", "CASTRO", "REYES", "GUTIERREZ", "PIZARRO", "VASQUEZ", "TAPIA", "SANCHEZ", "VERA", "JARA"
-            ];
-
-            for (const n of names) await saveCommonName(n);
-            for (const s of surnames) await saveCommonSurname(s);
-
-            Alert.alert('Éxito', 'Diccionario base cargado correctamente.');
-          } catch (e) {
-            Alert.alert('Error', 'Fallo al cargar el diccionario.');
-          } finally {
-            setIsSeeding(false);
-          }
-      }}
+      { text: 'Proceder', onPress: () => executeSeeding() }
     ]);
   };
 
@@ -458,6 +467,50 @@ export default function AdminScreen() {
           setAppData(defaults);
       }}
     ]);
+  };
+
+  const handleAddTemplate = () => {
+    if (!newTemplateText.trim()) return;
+    const updatedTemplates = [...(appData.whatsappTemplates || []), newTemplateText.trim()];
+    const updatedData = { ...appData, whatsappTemplates: updatedTemplates };
+    setAppData(updatedData);
+    setNewTemplateText('');
+    saveAppData(updatedData);
+  };
+
+  const handleRemoveTemplate = (index) => {
+    const updatedTemplates = (appData.whatsappTemplates || []).filter((_, i) => i !== index);
+    const updatedData = { ...appData, whatsappTemplates: updatedTemplates };
+    setAppData(updatedData);
+    saveAppData(updatedData);
+  };
+
+  const sendWhatsAppMessage = (order, template) => {
+    const phone = order.type === 'GROUP_ORDER' ? order.requesterInfo?.telefono : order.personalInfo?.telefono;
+    if (!phone) {
+      Alert.alert('Error', 'No se encontró el teléfono del cliente.');
+      return;
+    }
+
+    let message = template;
+    const name = order.type === 'GROUP_ORDER' ? order.requesterInfo?.nombre : order.personalInfo?.nombre;
+    const school = order.type === 'GROUP_ORDER' ? order.groupInfo?.colegio : order.personalInfo?.school;
+    const course = order.type === 'GROUP_ORDER' ? order.groupInfo?.curso : order.personalInfo?.course;
+
+    message = message.replace(/\[NOMBRE\]/gi, name || '');
+    message = message.replace(/\[COLEGIO\]/gi, school || '');
+    message = message.replace(/\[CURSO\]/gi, course || '');
+
+    const url = `whatsapp://send?phone=${phone.replace(/\+/g, '').replace(/\s/g, '')}&text=${encodeURIComponent(message)}`;
+    Linking.canOpenURL(url).then(supported => {
+      if (supported) {
+        Linking.openURL(url);
+      } else {
+        const webUrl = `https://wa.me/${phone.replace(/\+/g, '').replace(/\s/g, '')}?text=${encodeURIComponent(message)}`;
+        Linking.openURL(webUrl);
+      }
+    });
+    setIsWhatsAppModalVisible(false);
   };
 
   const simulateNotification = async () => {
@@ -614,6 +667,31 @@ export default function AdminScreen() {
                 ))}
               </View>
             </View>
+            <View style={styles.configCard}>
+              <Text style={styles.configTitle}>📝 Plantillas de WhatsApp</Text>
+              <View style={[styles.addInputRow, {flexDirection: 'column', alignItems: 'stretch'}]}>
+                 <TextInput 
+                   style={[styles.input, {marginBottom: 8, height: 80}]} 
+                   placeholder="Ej: Hola [NOMBRE], tu pedido está listo." 
+                   placeholderTextColor="#6B7280"
+                   multiline
+                   value={newTemplateText} 
+                   onChangeText={setNewTemplateText} 
+                 />
+                 <TouchableOpacity style={[styles.addButton, {width: '100%'}]} onPress={handleAddTemplate}>
+                    <Text style={{color: '#fff', fontWeight: 'bold'}}>Añadir Plantilla</Text>
+                 </TouchableOpacity>
+              </View>
+              <View style={{marginTop: 10}}>
+                {(appData.whatsappTemplates || []).map((template, i) => (
+                  <View key={i} style={[styles.listItem, {alignItems: 'flex-start'}]}>
+                    <Text style={[styles.listItemText, {flex: 1, marginRight: 8, fontSize: 12}]}>{template}</Text>
+                    <TouchableOpacity onPress={() => handleRemoveTemplate(i)}><Trash2 color="#EF4444" size={16} /></TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            </View>
+
             <TouchableOpacity 
               style={[styles.saveButton, {backgroundColor: '#6366F1', marginTop: 10, marginBottom: 16}]} 
               onPress={handleSeedDictionary}
@@ -628,17 +706,50 @@ export default function AdminScreen() {
 
         {activeTab === 'pedidos' && (
           <View>
-            <TouchableOpacity style={styles.exportButton} onPress={() => exportToExcel()}><Download color="#fff" size={20} /><Text style={styles.exportButtonText}>Exportar Todo</Text></TouchableOpacity>
+             <TouchableOpacity style={styles.exportButton} onPress={() => exportToExcel()}><Download color="#fff" size={20} /><Text style={styles.exportButtonText}>Exportar Todo</Text></TouchableOpacity>
             {sortedOrdersForRender.map(order => (
               <View key={order.id} style={styles.orderCard}>
                  <View style={styles.orderHeaderRow}>
                     <Text style={styles.orderName}>{order.type === 'GROUP_ORDER' ? 'GRUPAL' : order.personalInfo?.nombre}</Text>
-                    <TouchableOpacity onPress={() => handleDeleteOrder(order.id)} style={{marginLeft: 'auto'}}><Trash2 color="#EF4444" size={20} /></TouchableOpacity>
+                    <View style={{flexDirection: 'row', gap: 15, marginLeft: 'auto'}}>
+                       <TouchableOpacity onPress={() => { setSelectedOrderForWhatsApp(order); setIsWhatsAppModalVisible(true); }}>
+                          <MessageCircle color="#3B82F6" size={22} />
+                       </TouchableOpacity>
+                       <TouchableOpacity onPress={() => handleDeleteOrder(order.id)}>
+                          <Trash2 color="#EF4444" size={20} />
+                       </TouchableOpacity>
+                    </View>
                  </View>
                  <Text style={styles.orderDate}>{new Date(order.date).toLocaleString()}</Text>
                  <Text style={styles.listItemText}>{order.personalInfo?.school || order.groupInfo?.colegio}</Text>
               </View>
             ))}
+
+            {/* Modal de Respuestas Rápidas */}
+            {isWhatsAppModalVisible && (
+              <View style={styles.modalOverlay}>
+                <View style={styles.modalContent}>
+                  <View style={styles.modalHeader}>
+                    <Text style={styles.modalTitle}>Respuestas Rápidas</Text>
+                    <TouchableOpacity onPress={() => setIsWhatsAppModalVisible(false)}><X color="#9CA3AF" size={24} /></TouchableOpacity>
+                  </View>
+                  <ScrollView style={{maxHeight: 300}}>
+                    {(appData.whatsappTemplates || []).map((template, idx) => (
+                      <TouchableOpacity key={idx} style={styles.templateOption} onPress={() => sendWhatsAppMessage(selectedOrderForWhatsApp, template)}>
+                        <Text style={styles.templateOptionText}>{template}</Text>
+                        <ChevronRight color="#4B5563" size={16} />
+                      </TouchableOpacity>
+                    ))}
+                    {(appData.whatsappTemplates || []).length === 0 && (
+                      <Text style={{color: '#9CA3AF', textAlign: 'center', marginVertical: 20}}>No hay plantillas configuradas.</Text>
+                    )}
+                  </ScrollView>
+                  <Text style={{color: '#6B7280', fontSize: 10, marginTop: 10, textAlign: 'center'}}>
+                    Tip: Usa [NOMBRE], [COLEGIO] o [CURSO] en tus plantillas.
+                  </Text>
+                </View>
+              </View>
+            )}
           </View>
         )}
 
@@ -696,5 +807,11 @@ const styles = StyleSheet.create({
   orderCard: { backgroundColor: '#1F2937', padding: 15, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#374151' },
   orderName: { color: '#fff', fontWeight: 'bold' },
   orderDate: { color: '#9CA3AF', fontSize: 12 },
-  testBtn: { position: 'absolute', top: 10, right: 10, zIndex: 10, backgroundColor: '#374151', padding: 6, borderRadius: 10 }
+  testBtn: { position: 'absolute', top: 10, right: 10, zIndex: 10, backgroundColor: '#374151', padding: 6, borderRadius: 10 },
+  modalOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: 20, zIndex: 1000 },
+  modalContent: { backgroundColor: '#1F2937', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: '#374151' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  templateOption: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111827', padding: 15, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#374151' },
+  templateOptionText: { color: '#E5E7EB', flex: 1, fontSize: 13 },
 });

@@ -7,7 +7,10 @@ import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'fire
 import { auth, db } from '../services/firebaseConfig';
 import { doc, setDoc } from 'firebase/firestore';
 import { LogIn, UserPlus, Mail, Lock, User, GraduationCap, School, BookOpen, MessageCircle } from 'lucide-react-native';
-import { checkManagerExists, registerCourseManager, checkNameAuthorized, subscribeToAppData } from '../services/firebaseOrderService';
+import { 
+  checkManagerExists, registerCourseManager, checkNameAuthorized, 
+  subscribeToAppData, getAuditLists, checkIdentityOffline, auditSchool 
+} from '../services/firebaseOrderService';
 import { CURSOS } from '../constants/chileData';
 
 export default function AuthScreen({ navigation }) {
@@ -21,13 +24,47 @@ export default function AuthScreen({ navigation }) {
   const [loading, setLoading] = useState(false);
   const [showCoursePicker, setShowCoursePicker] = useState(false);
   const [whatsappNumber, setWhatsappNumber] = useState('');
+  const [showSchoolPicker, setShowSchoolPicker] = useState(false);
+  
+  // Estados de Auditoría
+  const [auditLists, setAuditLists] = useState({ validNames: [], commonNames: [], commonSurnames: [] });
+  const [isNameValid, setIsNameValid] = useState(null); // null: empty, true: valid, false: invalid
+  const [isSchoolValid, setIsSchoolValid] = useState(null);
 
   React.useEffect(() => {
     const unsub = subscribeToAppData(data => {
       if (data?.whatsappSupport) setWhatsappNumber(data.whatsappSupport);
+      if (data?.schools) {
+        const parsed = data.schools.map(s => typeof s === 'string' ? s : s.nombre);
+        setSchoolsList(parsed);
+      }
     });
+
+    // Cargar listas de auditoría una sola vez
+    getAuditLists().then(setAuditLists);
+
     return unsub;
   }, []);
+
+  // Validación en tiempo real del nombre
+  React.useEffect(() => {
+    if (!nombre.trim()) {
+      setIsNameValid(null);
+    } else {
+      const isValid = checkIdentityOffline(nombre, auditLists);
+      setIsNameValid(isValid);
+    }
+  }, [nombre, auditLists]);
+
+  // Validación en tiempo real del colegio
+  React.useEffect(() => {
+    if (!colegio.trim()) {
+      setIsSchoolValid(null);
+    } else {
+      const isValid = auditSchool(colegio, schoolsList);
+      setIsSchoolValid(isValid);
+    }
+  }, [colegio, schoolsList]);
 
   const openSoporteWhatsApp = () => {
     const phone = whatsappNumber || '+56900000000';
@@ -36,6 +73,22 @@ export default function AuthScreen({ navigation }) {
     Linking.openURL(url).catch(() => {
       Linking.openURL(`https://wa.me/${phone.replace('+', '')}?text=${encodeURIComponent(msg)}`);
     });
+  };
+
+  const handleSchoolSearch = (text) => {
+    setColegio(text);
+    if (text.length > 0) {
+      const filtered = schoolsList.filter(s => s.toLowerCase().includes(text.toLowerCase()));
+      setFilteredSchools(filtered);
+      setShowSchoolPicker(true);
+    } else {
+      setShowSchoolPicker(false);
+    }
+  };
+
+  const selectSchool = (schoolName) => {
+    setColegio(schoolName);
+    setShowSchoolPicker(false);
   };
 
   const handleAuth = async () => {
@@ -49,6 +102,16 @@ export default function AuthScreen({ navigation }) {
       if (isLogin) {
         await signInWithEmailAndPassword(auth, email, password);
       } else {
+        // Validar Colegio usando el servicio robusto (normalizado)
+        if (!auditSchool(colegio, schoolsList)) {
+          Alert.alert(
+            'Colegio No Válido',
+            'Debes seleccionar un colegio válido de nuestra lista oficial.'
+          );
+          setLoading(false);
+          return;
+        }
+
         // BLINDAJE: Verificar si el nombre está autorizado
         const isAuthorized = await checkNameAuthorized(nombre);
         if (!isAuthorized) {
@@ -117,7 +180,11 @@ export default function AuthScreen({ navigation }) {
           {!isLogin && (
             <View style={styles.inputGroup}>
               <Text style={styles.label}>Nombre Completo (Real)</Text>
-              <View style={styles.inputWrapper}>
+              <View style={[
+                styles.inputWrapper, 
+                isNameValid === true && styles.inputValid, 
+                isNameValid === false && styles.inputInvalid
+              ]}>
                 <User size={20} color="#94A3B8" style={styles.icon} />
                 <TextInput 
                   style={styles.input} 
@@ -127,6 +194,9 @@ export default function AuthScreen({ navigation }) {
                   onChangeText={setNombre}
                 />
               </View>
+              {isNameValid === false && (
+                <Text style={styles.errorHint}>Nombre no reconocido en nuestra base de datos.</Text>
+              )}
             </View>
           )}
 
@@ -157,21 +227,40 @@ export default function AuthScreen({ navigation }) {
 
           {!isLogin && (
             <>
-              <View style={styles.inputGroup}>
+              <View style={[styles.inputGroup, { zIndex: 50 }]}>
                 <Text style={styles.label}>Colegio / Institución</Text>
-                <View style={styles.inputWrapper}>
+                <View style={[
+                  styles.inputWrapper,
+                  isSchoolValid === true && styles.inputValid,
+                  isSchoolValid === false && styles.inputInvalid
+                ]}>
                   <School size={20} color="#94A3B8" style={styles.icon} />
                   <TextInput 
                     style={styles.input} 
                     placeholder="Ej: Instituto Nacional" 
                     placeholderTextColor="#64748B"
                     value={colegio}
-                    onChangeText={setColegio}
+                    onChangeText={handleSchoolSearch}
                   />
                 </View>
+                {showSchoolPicker && filteredSchools.length > 0 && (
+                  <View style={styles.autocompleteDropdown}>
+                    <ScrollView style={{maxHeight: 150}} keyboardShouldPersistTaps="handled">
+                      {filteredSchools.map((s, idx) => (
+                        <TouchableOpacity 
+                          key={idx} 
+                          style={styles.autocompleteOption} 
+                          onPress={() => selectSchool(s)}
+                        >
+                          <Text style={styles.autocompleteOptionText}>{s}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
               </View>
 
-              <View style={styles.inputGroup}>
+              <View style={[styles.inputGroup, { zIndex: 10 }]}>
                 <Text style={styles.label}>Curso / Generación</Text>
                 <TouchableOpacity style={styles.inputWrapper} onPress={() => setShowCoursePicker(true)}>
                   <BookOpen size={20} color="#94A3B8" style={styles.icon} />
@@ -215,9 +304,13 @@ export default function AuthScreen({ navigation }) {
           </View>
 
           <TouchableOpacity 
-            style={[styles.mainButton, { backgroundColor: isLogin ? '#3B82F6' : '#10B981' }]} 
+            style={[
+              styles.mainButton, 
+              { backgroundColor: isLogin ? '#3B82F6' : '#10B981' },
+              (!isLogin && (isNameValid !== true || isSchoolValid !== true)) && styles.buttonDisabled
+            ]} 
             onPress={handleAuth}
-            disabled={loading}
+            disabled={loading || (!isLogin && (isNameValid !== true || isSchoolValid !== true))}
           >
             {loading ? <ActivityIndicator color="#fff" /> : (
               <Text style={styles.buttonText}>{isLogin ? 'Entrar' : 'Registrarse'}</Text>
@@ -335,5 +428,47 @@ const styles = StyleSheet.create({
   modalOption: { paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#334155' },
   modalOptionText: { color: '#F1F5F9', fontSize: 16, textAlign: 'center' },
   closeModalBtn: { marginTop: 20, padding: 15, alignItems: 'center' },
-  closeModalText: { color: '#94A3B8', fontSize: 14 }
+  closeModalText: { color: '#94A3B8', fontSize: 14 },
+  autocompleteDropdown: {
+    position: 'absolute',
+    top: 80,
+    left: 0,
+    right: 0,
+    backgroundColor: '#1E293B',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+    zIndex: 100,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5
+  },
+  autocompleteOption: {
+    padding: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#334155'
+  },
+  autocompleteOptionText: {
+    color: '#F1F5F9',
+    fontSize: 15
+  },
+  inputValid: {
+    borderColor: '#10B981',
+    borderWidth: 1.5,
+  },
+  inputInvalid: {
+    borderColor: '#EF4444',
+    borderWidth: 1.5,
+  },
+  errorHint: {
+    color: '#EF4444',
+    fontSize: 12,
+    marginTop: 5,
+    marginLeft: 5
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+  }
 });

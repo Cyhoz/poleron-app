@@ -8,9 +8,8 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { REGIONES, CURSOS, COLEGIOS_REALES } from '../constants/chileData';
 import {
-  saveOrder, getAdminSizes, subscribeToAppData,
   getProducts, subscribeToValidNames, getUserProfile, getCalculatorResultsByCourse,
-  normalizeName, checkNameAuthorized
+  normalizeName, checkNameAuthorized, auditSchool, getAuditLists, checkIdentityOffline
 } from '../services/firebaseOrderService';
 import { auth } from '../services/firebaseConfig';
 
@@ -51,6 +50,13 @@ export default function TeacherOrderScreen({ navigation }) {
   const [showSchoolResults, setShowSchoolResults] = useState(false);
   const [validNames, setValidNames] = useState([]);
   const [whatsappNumber, setWhatsappNumber] = useState('');
+  const [schoolsList, setSchoolsList] = useState([]);
+  
+  // Auditoría States
+  const [auditLists, setAuditLists] = useState({ validNames: [], commonNames: [], commonSurnames: [] });
+  const [isSchoolValid, setIsSchoolValid] = useState(null);
+  const [isStudentNameValid, setIsStudentNameValid] = useState(null);
+  const [isStudentSurnameValid, setIsStudentSurnameValid] = useState(null);
 
   useEffect(() => {
     if (!auth.currentUser) {
@@ -91,16 +97,36 @@ export default function TeacherOrderScreen({ navigation }) {
       setValidNames(names.map(n => normalizeName(n)));
     });
 
-    const unsubWhatsApp = subscribeToAppData((data) => {
+    const unsubAppData = subscribeToAppData((data) => {
       if (data?.whatsappSupport) setWhatsappNumber(data.whatsappSupport);
+      if (data?.schools) {
+        setSchoolsList(data.schools.map(s => typeof s === 'string' ? s : s.nombre));
+      }
     });
+
+    getAuditLists().then(setAuditLists);
 
     initData();
     return () => {
       unsubValidNames();
-      unsubWhatsApp();
+      unsubAppData();
     };
   }, [navigation]);
+
+  // Validaciones en tiempo real
+  useEffect(() => {
+    setIsSchoolValid(auditSchool(groupInfo.colegio, schoolsList));
+  }, [groupInfo.colegio, schoolsList]);
+
+  useEffect(() => {
+    if (!currentStudent.nombre.trim()) setIsStudentNameValid(null);
+    else setIsStudentNameValid(checkIdentityOffline(currentStudent.nombre, auditLists));
+  }, [currentStudent.nombre, auditLists]);
+
+  useEffect(() => {
+    if (!currentStudent.apellido.trim()) setIsStudentSurnameValid(null);
+    else setIsStudentSurnameValid(checkIdentityOffline(`${currentStudent.nombre} ${currentStudent.apellido}`, auditLists));
+  }, [currentStudent.nombre, currentStudent.apellido, auditLists]);
 
   const openSoporteWhatsApp = () => {
     const phone = whatsappNumber || '+56900000000';
@@ -118,14 +144,10 @@ export default function TeacherOrderScreen({ navigation }) {
   const handleSchoolSearch = (text) => {
     setSchoolSearch(text);
     updateGroupInfo('colegio', text);
-    if (text.length > 2) {
-      fetch(`${API_BASE_URL}/api/schools?query=${text}&limit=10`)
-        .then(res => res.json())
-        .then(data => {
-          setFilteredSchools(data.map(s => s.nombre));
-          setShowSchoolResults(true);
-        })
-        .catch(err => console.error('Error buscando colegios:', err));
+    if (text.length > 0) {
+      const filtered = schoolsList.filter(s => s.toLowerCase().includes(text.toLowerCase()));
+      setFilteredSchools(filtered);
+      setShowSchoolResults(true);
     } else {
       setShowSchoolResults(false);
     }
@@ -320,7 +342,17 @@ export default function TeacherOrderScreen({ navigation }) {
           
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Colegio / Institución</Text>
-            <TextInput style={styles.input} value={schoolSearch} onChangeText={handleSchoolSearch} placeholder="Busca tu colegio..." placeholderTextColor="#64748B" />
+            <TextInput 
+              style={[
+                styles.input, 
+                isSchoolValid === true && styles.inputValid,
+                isSchoolValid === false && styles.inputInvalid
+              ]} 
+              value={schoolSearch} 
+              onChangeText={handleSchoolSearch} 
+              placeholder="Busca tu colegio..." 
+              placeholderTextColor="#64748B" 
+            />
             {showSchoolResults && filteredSchools.length > 0 && (
               <View style={styles.searchResults}>
                 {filteredSchools.map((s, i) => (
@@ -423,9 +455,12 @@ export default function TeacherOrderScreen({ navigation }) {
           )}
 
           <TouchableOpacity 
-            style={[styles.primaryButton, (!groupInfo.colegio || !groupInfo.curso || designFiles.length === 0 || !requesterInfo.nombre || !requesterInfo.telefono) && {opacity: 0.5}]} 
+            style={[
+              styles.primaryButton, 
+              (!groupInfo.colegio || !groupInfo.curso || designFiles.length === 0 || !requesterInfo.nombre || !requesterInfo.telefono || !isSchoolValid) && {opacity: 0.5}
+            ]} 
             onPress={() => setStep(2)}
-            disabled={!groupInfo.colegio || !groupInfo.curso || designFiles.length === 0 || !requesterInfo.nombre || !requesterInfo.telefono}
+            disabled={!groupInfo.colegio || !groupInfo.curso || designFiles.length === 0 || !requesterInfo.nombre || !requesterInfo.telefono || !isSchoolValid}
           >
             <Text style={styles.primaryButtonText}>Continuar al Carrito</Text>
           </TouchableOpacity>
@@ -441,11 +476,27 @@ export default function TeacherOrderScreen({ navigation }) {
             <View style={styles.row}>
               <View style={{flex: 1, marginRight: 8}}>
                 <Text style={styles.label}>Nombre</Text>
-                <TextInput style={styles.smallInput} value={currentStudent.nombre} onChangeText={t => setCurrentStudent({...currentStudent, nombre: t})} />
+                <TextInput 
+                  style={[
+                    styles.smallInput,
+                    isStudentNameValid === true && styles.inputValid,
+                    isStudentNameValid === false && styles.inputInvalid
+                  ]} 
+                  value={currentStudent.nombre} 
+                  onChangeText={t => setCurrentStudent({...currentStudent, nombre: t})} 
+                />
               </View>
               <View style={{flex: 1}}>
                 <Text style={styles.label}>Apellido</Text>
-                <TextInput style={styles.smallInput} value={currentStudent.apellido} onChangeText={t => setCurrentStudent({...currentStudent, apellido: t})} />
+                <TextInput 
+                  style={[
+                    styles.smallInput,
+                    isStudentSurnameValid === true && styles.inputValid,
+                    isStudentSurnameValid === false && styles.inputInvalid
+                  ]} 
+                  value={currentStudent.apellido} 
+                  onChangeText={t => setCurrentStudent({...currentStudent, apellido: t})} 
+                />
               </View>
             </View>
             
@@ -463,7 +514,14 @@ export default function TeacherOrderScreen({ navigation }) {
               </TouchableOpacity>
             </View>
 
-            <TouchableOpacity style={styles.addButton} onPress={addStudent}>
+            <TouchableOpacity 
+              style={[
+                styles.addButton, 
+                (isStudentNameValid !== true || isStudentSurnameValid !== true) && {opacity: 0.5}
+              ]} 
+              onPress={addStudent}
+              disabled={isStudentNameValid !== true || isStudentSurnameValid !== true}
+            >
               <Plus color="#fff" size={20} style={{marginRight: 8}} />
               <Text style={styles.primaryButtonText}>Añadir Manualmente</Text>
             </TouchableOpacity>
@@ -670,5 +728,7 @@ const styles = StyleSheet.create({
   fileInfo: { flex: 1 },
   fileName: { color: '#F1F5F9', fontSize: 13, fontWeight: 'bold' },
   fileSize: { color: '#64748B', fontSize: 11 },
-  removeFileBtn: { padding: 8 }
+  removeFileBtn: { padding: 8 },
+  inputValid: { borderColor: '#10B981', borderWidth: 1.5 },
+  inputInvalid: { borderColor: '#EF4444', borderWidth: 1.5 }
 });

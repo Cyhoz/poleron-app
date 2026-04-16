@@ -1,4 +1,4 @@
-import { collection, addDoc, getDocs, deleteDoc, doc, setDoc, getDoc, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, getDocs, deleteDoc, doc, setDoc, getDoc, query, where, onSnapshot, writeBatch } from 'firebase/firestore';
 import { db } from './firebaseConfig';
 
 export const saveOrder = async (orderData) => {
@@ -198,15 +198,49 @@ export const normalizeName = (name) => {
 
 export const checkNameAuthorized = async (fullName) => {
   try {
-    const API_BASE_URL = 'https://poleron-app-2.onrender.com';
-    const response = await fetch(`${API_BASE_URL}/api/validate-name?name=${encodeURIComponent(fullName)}`);
-    const data = await response.json();
-    return data.isValid === true;
+    const normalizedTarget = normalizeName(fullName);
+    if (!normalizedTarget) return false;
+
+    // 1. Verificar en lista de alumnos autorizados (Búsqueda DIRECTA por ID)
+    // Esto gasta solo 1 lectura de Firestore en lugar de escanear todo.
+    const validSnap = await getDoc(doc(db, "valid_names", normalizedTarget));
+    if (validSnap.exists()) return true;
+
+    // 2. Opción B: Validación flexible por diccionarios comunes
+    const parts = normalizedTarget.split(' ');
+    if (parts.length < 2) return false; 
+
+    // Verificamos cada parte del nombre en paralelo (Búsqueda Directa)
+    const checks = await Promise.all(parts.map(async (part) => {
+      const [nameSnap, surnameSnap] = await Promise.all([
+        getDoc(doc(db, "common_names", part)),
+        getDoc(doc(db, "common_surnames", part))
+      ]);
+      return { 
+        isCommonName: nameSnap.exists(), 
+        isCommonSurname: surnameSnap.exists() 
+      };
+    }));
+
+    // El nombre es válido si al menos una parte es un "nombre común" 
+    // y al menos una de las otras partes es un "apellido común"
+    const hasCommonName = checks.some(c => c.isCommonName);
+    const hasCommonSurname = checks.some(c => c.isCommonSurname);
+
+    return hasCommonName && hasCommonSurname;
   } catch (error) {
-    console.error("Error verificando autorización de nombre:", error);
-    // Fallback: Si el servidor falla, permitimos (o podrías bloquear por seguridad)
-    return true; 
+    console.error("Error en auditoría de identidad optimizada:", error);
+    return false; 
   }
+};
+
+export const auditSchool = (schoolName, authorizedSchools = []) => {
+  if (!schoolName || authorizedSchools.length === 0) return false;
+  const normalizedTarget = normalizeName(schoolName);
+  return authorizedSchools.some(s => {
+    const name = typeof s === 'string' ? s : s.nombre;
+    return normalizeName(name) === normalizedTarget;
+  });
 };
 
 
@@ -241,6 +275,43 @@ export const subscribeToValidNames = (callback) => {
     callback(names.sort());
   });
 };
+
+export const getAuditLists = async () => {
+  try {
+    const [validSnap, commonNSnap, commonSSnap] = await Promise.all([
+      getDocs(collection(db, "valid_names")),
+      getDocs(collection(db, "common_names")),
+      getDocs(collection(db, "common_surnames"))
+    ]);
+
+    return {
+      validNames: validSnap.docs.map(d => normalizeName(d.id)),
+      commonNames: commonNSnap.docs.map(d => normalizeName(d.id)),
+      commonSurnames: commonSSnap.docs.map(d => normalizeName(d.id))
+    };
+  } catch (e) {
+    console.error("Error fetching audit lists:", e);
+    return { validNames: [], commonNames: [], commonSurnames: [] };
+  }
+};
+
+export const checkIdentityOffline = (fullName, lists) => {
+  const normalizedTarget = normalizeName(fullName);
+  if (!normalizedTarget) return false;
+
+  // 1. Whitelist
+  if (lists.validNames.includes(normalizedTarget)) return true;
+
+  // 2. Common dictionaries logic
+  const parts = normalizedTarget.split(' ');
+  if (parts.length < 2) return false;
+
+  const firstNameValid = lists.commonNames.includes(parts[0]);
+  const hasCommonSurname = parts.slice(1).some(part => lists.commonSurnames.includes(part));
+
+  return firstNameValid && hasCommonSurname;
+};
+
 
 // --- Gestión de Diccionario Global (Nombres/Apellidos comunes) ---
 
@@ -306,6 +377,30 @@ export const subscribeToCommonSurnames = (callback) => {
     });
     callback(sn.sort());
   });
+};
+
+export const seedDictionaryBatch = async (names, surnames) => {
+  try {
+    const batch = writeBatch(db);
+    
+    names.forEach(name => {
+      const nameUpper = name.toUpperCase().trim();
+      const ref = doc(db, "common_names", nameUpper);
+      batch.set(ref, { exists: true });
+    });
+
+    surnames.forEach(surname => {
+      const snUpper = surname.toUpperCase().trim();
+      const ref = doc(db, "common_surnames", snUpper);
+      batch.set(ref, { exists: true });
+    });
+
+    await batch.commit();
+    return true;
+  } catch (error) {
+    console.error("Error al poblar diccionario en lote", error);
+    return false;
+  }
 };
 
 // --- Manejo de Perfiles y Roles ---
