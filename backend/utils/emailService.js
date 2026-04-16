@@ -56,13 +56,22 @@ async function sendOrderEmail(orderData) {
         const buffer = await workbook.xlsx.writeBuffer();
 
         // CONFIGURACIÓN DE NODEMAILER
-        // Usamos service: 'gmail' para que nodemailer maneje los puertos automáticamente
+        const user = process.env.SMTP_USER || 'inzunzajuan202@gmail.com';
+        const pass = process.env.SMTP_PASS;
+
+        if (!pass) {
+            console.error('❌ ERROR: SMTP_PASS no está definida en las variables de entorno.');
+            throw new Error('Configuración incompleta: Falta contraseña de Gmail (SMTP_PASS)');
+        }
+
         const transporter = nodemailer.createTransport({
             service: 'gmail',
             auth: {
-                user: process.env.SMTP_USER || 'inzunzajuan202@gmail.com',
-                pass: process.env.SMTP_PASS 
-            }
+                user: user,
+                pass: pass
+            },
+            logger: true, // Registra en consola el protocolo SMTP
+            debug: true   // Muestra errores detallados de red
         });
 
         // Verificación rápida del transporte

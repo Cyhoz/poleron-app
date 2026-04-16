@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -9,8 +10,6 @@ const axios = require('axios');
 const { sendOrderEmail } = require('./utils/emailService');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
-
-dotenv.config();
 
 const app = express();
 
