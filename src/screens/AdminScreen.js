@@ -9,7 +9,14 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as XLSX from 'xlsx';
 import Constants from 'expo-constants';
-import { getOrders, deleteOrder, saveAdminSizes, getAdminSizes, saveAdminPushToken, subscribeToOrders, saveAppData, getAppData, subscribeToAppData, saveValidName, deleteValidName, subscribeToValidNames, getAllManagers, getUserProfile } from '../services/firebaseOrderService';
+import { 
+  getOrders, deleteOrder, saveAdminSizes, getAdminSizes, saveAdminPushToken, 
+  subscribeToOrders, saveAppData, getAppData, subscribeToAppData, 
+  saveValidName, deleteValidName, subscribeToValidNames, 
+  saveCommonName, deleteCommonName, subscribeToCommonNames,
+  saveCommonSurname, deleteCommonSurname, subscribeToCommonSurnames,
+  getAllManagers, getUserProfile 
+} from '../services/firebaseOrderService';
 import { auth, db } from '../services/firebaseConfig';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
 import { collection, query, where, getDocs } from 'firebase/firestore';
@@ -108,6 +115,11 @@ export default function AdminScreen() {
   const [validNames, setValidNames] = useState([]);
   const [newValidName, setNewValidName] = useState('');
 
+  const [commonNames, setCommonNames] = useState([]);
+  const [newCommonName, setNewCommonName] = useState('');
+  const [commonSurnames, setCommonSurnames] = useState([]);
+  const [newCommonSurname, setNewCommonSurname] = useState('');
+
   const [managers, setManagers] = useState([]);
   const [isLoadingManagers, setIsLoadingManagers] = useState(false);
   const [managerFilters, setManagerFilters] = useState({ school: '', course: '' });
@@ -154,10 +166,20 @@ export default function AdminScreen() {
         setValidNames(names);
       });
 
+      const unsubscribeCommonNames = subscribeToCommonNames((names) => {
+        setCommonNames(names);
+      });
+
+      const unsubscribeCommonSurnames = subscribeToCommonSurnames((sn) => {
+        setCommonSurnames(sn);
+      });
+
       return () => {
         clearInterval(interval);
         unsubscribeData();
         unsubscribeNames();
+        unsubscribeCommonNames();
+        unsubscribeCommonSurnames();
       };
     }
   }, [isAuthenticated]);
@@ -381,6 +403,18 @@ export default function AdminScreen() {
     setNewValidName('');
   };
 
+  const handleAddCommonName = async () => {
+    if (!newCommonName.trim()) return;
+    await saveCommonName(newCommonName);
+    setNewCommonName('');
+  };
+
+  const handleAddCommonSurname = async () => {
+    if (!newCommonSurname.trim()) return;
+    await saveCommonSurname(newCommonSurname);
+    setNewCommonSurname('');
+  };
+
   const handleResetAppData = () => {
     Alert.alert('Restablecer', '¿Restablecer a valores de fábrica?', [
       { text: 'Cancelar' },
@@ -498,9 +532,43 @@ export default function AdminScreen() {
               ))}
             </View>
             <View style={styles.configCard}>
-              <Text style={styles.configTitle}>👤 Nombres Autorizados</Text>
+              <Text style={styles.configTitle}>👤 Diccionario Global: Nombres</Text>
               <View style={styles.addInputRow}>
-                 <TextInput style={[styles.input, {flex: 1, marginRight: 8}]} placeholder="Nuevo Nombre" value={newValidName} onChangeText={setNewValidName} />
+                 <TextInput style={[styles.input, {flex: 1, marginRight: 8}]} placeholder="Nuevo Nombre Común" value={newCommonName} onChangeText={setNewCommonName} />
+                 <TouchableOpacity style={styles.addButton} onPress={handleAddCommonName}><Plus color="#fff" size={24} /></TouchableOpacity>
+              </View>
+              <View style={styles.tagsContainer}>
+                {commonNames.slice(0, 50).map(name => (
+                  <View key={name} style={[styles.tag, {backgroundColor: '#10B981'}]}>
+                    <Text style={styles.tagText}>{name}</Text>
+                    <TouchableOpacity onPress={() => deleteCommonName(name)}><X color="#fff" size={14} /></TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+              {commonNames.length > 50 && <Text style={{color: '#9CA3AF', fontSize: 10, marginTop: 8}}>Y {commonNames.length - 50} más...</Text>}
+            </View>
+
+            <View style={styles.configCard}>
+              <Text style={styles.configTitle}>👤 Diccionario Global: Apellidos</Text>
+              <View style={styles.addInputRow}>
+                 <TextInput style={[styles.input, {flex: 1, marginRight: 8}]} placeholder="Nuevo Apellido Común" value={newCommonSurname} onChangeText={setNewCommonSurname} />
+                 <TouchableOpacity style={styles.addButton} onPress={handleAddCommonSurname}><Plus color="#fff" size={24} /></TouchableOpacity>
+              </View>
+              <View style={styles.tagsContainer}>
+                {commonSurnames.slice(0, 50).map(sn => (
+                  <View key={sn} style={[styles.tag, {backgroundColor: '#F59E0B'}]}>
+                    <Text style={styles.tagText}>{sn}</Text>
+                    <TouchableOpacity onPress={() => deleteCommonSurname(sn)}><X color="#fff" size={14} /></TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+              {commonSurnames.length > 50 && <Text style={{color: '#9CA3AF', fontSize: 10, marginTop: 8}}>Y {commonSurnames.length - 50} más...</Text>}
+            </View>
+
+            <View style={styles.configCard}>
+              <Text style={styles.configTitle}>🎓 Identidades Específicas (Alumnos)</Text>
+              <View style={styles.addInputRow}>
+                 <TextInput style={[styles.input, {flex: 1, marginRight: 8}]} placeholder="Nombre Alumno Autorizado" value={newValidName} onChangeText={setNewValidName} />
                  <TouchableOpacity style={styles.addButton} onPress={handleAddValidName}><Plus color="#fff" size={24} /></TouchableOpacity>
               </View>
               <View style={styles.tagsContainer}>

@@ -12,17 +12,6 @@ const swaggerJsdoc = require('swagger-jsdoc');
 const path = require('path');
 const fs = require('fs');
 
-// Carga de diccionarios de nombres/apellidos
-let CHILEAN_NAMES = [];
-let CHILEAN_SURNAMES = [];
-try {
-    CHILEAN_NAMES = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'chilean_names.json'), 'utf8'));
-    CHILEAN_SURNAMES = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'chilean_surnames.json'), 'utf8'));
-    console.log(`✅ Diccionario cargado: ${CHILEAN_NAMES.length} nombres, ${CHILEAN_SURNAMES.length} apellidos.`);
-} catch (err) {
-    console.error('⚠️ No se pudieron cargar los diccionarios de nombres:', err.message);
-}
-
 const app = express();
 
 // --- CONFIGURACIÓN SWAGGER ---
@@ -125,10 +114,21 @@ app.get('/api/validate-name', async (req, res) => {
             return res.json({ isValid: true, source: 'AUTHORIZED_LIST' });
         }
 
-        // 2. Verificación en Diccionario Global (Blindaje contra nombres falsos)
-        // Comprobar si al menos un nombre y un apellido están en el diccionario
-        const hasValidName = parts.some(p => CHILEAN_NAMES.includes(p));
-        const hasValidSurname = parts.some(p => CHILEAN_SURNAMES.includes(p));
+        // 2. Verificación en Diccionario Global (Firestore)
+        // Buscamos si las partes coinciden con nombres y apellidos comunes
+        const checks = await Promise.all(parts.map(async (p) => {
+            const [nameDoc, surnameDoc] = await Promise.all([
+                db.collection('common_names').doc(p).get(),
+                db.collection('common_surnames').doc(p).get()
+            ]);
+            return {
+                isName: nameDoc.exists,
+                isSurname: surnameDoc.exists
+            };
+        }));
+
+        const hasValidName = checks.some(c => c.isName);
+        const hasValidSurname = checks.some(c => c.isSurname);
 
         if (hasValidName && hasValidSurname) {
             return res.json({ isValid: true, source: 'GLOBAL_DICTIONARY' });

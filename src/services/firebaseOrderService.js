@@ -242,6 +242,72 @@ export const subscribeToValidNames = (callback) => {
   });
 };
 
+// --- Gestión de Diccionario Global (Nombres/Apellidos comunes) ---
+
+export const saveCommonName = async (name) => {
+  try {
+    const nameUpper = name.toUpperCase().trim();
+    await setDoc(doc(db, "common_names", nameUpper), { exists: true });
+    return true;
+  } catch (error) {
+    console.error("Error guardando nombre común", error);
+    return false;
+  }
+};
+
+export const deleteCommonName = async (name) => {
+  try {
+    await deleteDoc(doc(db, "common_names", name.toUpperCase().trim()));
+    return true;
+  } catch (error) {
+    console.error("Error borrando nombre común", error);
+    return false;
+  }
+};
+
+export const subscribeToCommonNames = (callback) => {
+  const q = query(collection(db, "common_names"));
+  return onSnapshot(q, (snapshot) => {
+    const names = [];
+    snapshot.forEach((doc) => {
+      names.push(doc.id);
+    });
+    callback(names.sort());
+  });
+};
+
+export const saveCommonSurname = async (surname) => {
+  try {
+    const snUpper = surname.toUpperCase().trim();
+    await setDoc(doc(db, "common_surnames", snUpper), { exists: true });
+    return true;
+  } catch (error) {
+    console.error("Error guardando apellido común", error);
+    return false;
+  }
+};
+
+export const deleteCommonSurname = async (surname) => {
+  try {
+    await deleteDoc(doc(db, "common_surnames", surname.toUpperCase().trim()));
+    return true;
+  } catch (error) {
+    console.error("Error borrando apellido común", error);
+    return false;
+  }
+};
+
+export const subscribeToCommonSurnames = (callback) => {
+  const q = query(collection(db, "common_surnames"));
+  return onSnapshot(q, (snapshot) => {
+    const sn = [];
+    snapshot.forEach((doc) => {
+      sn.push(doc.id);
+    });
+    callback(sn.sort());
+  });
+};
+
 // --- Manejo de Perfiles y Roles ---
 
 export const getUserProfile = async (uid) => {
