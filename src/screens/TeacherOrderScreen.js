@@ -10,7 +10,7 @@ import { REGIONES, CURSOS, COLEGIOS_REALES } from '../constants/chileData';
 import {
   saveOrder, getAdminSizes, subscribeToAppData,
   getProducts, subscribeToValidNames, getUserProfile, getCalculatorResultsByCourse,
-  normalizeName
+  normalizeName, checkNameAuthorized
 } from '../services/firebaseOrderService';
 import { auth } from '../services/firebaseConfig';
 
@@ -164,23 +164,25 @@ export default function TeacherOrderScreen({ navigation }) {
     setDesignFiles(designFiles.filter((_, i) => i !== index));
   };
 
-  const addStudent = () => {
+  const addStudent = async () => {
     if (!currentStudent.nombre || !currentStudent.apellido) {
       Alert.alert('Error', 'Nombre y Apellido son obligatorios.');
       return;
     }
-    if (validNames.length > 0) {
-      const fullName = `${currentStudent.nombre} ${currentStudent.apellido}`;
-      const nameToCheck = normalizeName(fullName);
-      
-      if (!validNames.includes(nameToCheck)) {
-        Alert.alert(
-          'Nombre No Autorizado', 
-          `El nombre "${fullName}" no está en la lista oficial. Solo puedes agregar alumnos autorizados por la administración.`
-        );
-        return;
-      }
+
+    setIsLoading(true); // Reusamos el estado de carga para el feedback visual
+    const fullName = `${currentStudent.nombre} ${currentStudent.apellido}`;
+    const isAuthorized = await checkNameAuthorized(fullName);
+    setIsLoading(false);
+
+    if (!isAuthorized) {
+      Alert.alert(
+        'Identidad No Verificada', 
+        `El nombre "${fullName}" no ha sido reconocido como un nombre real o no está en la lista autorizada. Por favor, verifica la ortografía o contacta a administración.`
+      );
+      return;
     }
+
     setStudents([...students, { ...currentStudent, id: Date.now().toString() }]);
     setCurrentStudent({ nombre: '', apellido: '', apodo: '', talla: 'S' });
   };
@@ -379,11 +381,25 @@ export default function TeacherOrderScreen({ navigation }) {
           <View style={styles.row}>
             <View style={[styles.inputGroup, {flex: 1, marginRight: 8}]}>
               <Text style={styles.label}>Nombre</Text>
-              <TextInput style={styles.input} value={requesterInfo.nombre} onChangeText={t => setRequesterInfo({...requesterInfo, nombre: t})} placeholder="Tu nombre" placeholderTextColor="#64748B" />
+              <TextInput 
+                style={[styles.input, userProfile?.role === 'manager' && {opacity: 0.7, backgroundColor: '#334155'}]} 
+                value={requesterInfo.nombre} 
+                onChangeText={t => setRequesterInfo({...requesterInfo, nombre: t})} 
+                placeholder="Tu nombre" 
+                placeholderTextColor="#64748B"
+                editable={userProfile?.role !== 'manager'} 
+              />
             </View>
             <View style={[styles.inputGroup, {flex: 1}]}>
               <Text style={styles.label}>Apellido</Text>
-              <TextInput style={styles.input} value={requesterInfo.apellido} onChangeText={t => setRequesterInfo({...requesterInfo, apellido: t})} placeholder="Tu apellido" placeholderTextColor="#64748B" />
+              <TextInput 
+                style={[styles.input, userProfile?.role === 'manager' && {opacity: 0.7, backgroundColor: '#334155'}]} 
+                value={requesterInfo.apellido} 
+                onChangeText={t => setRequesterInfo({...requesterInfo, apellido: t})} 
+                placeholder="Tu apellido" 
+                placeholderTextColor="#64748B"
+                editable={userProfile?.role !== 'manager'} 
+              />
             </View>
           </View>
 

@@ -198,20 +198,14 @@ export const normalizeName = (name) => {
 
 export const checkNameAuthorized = async (fullName) => {
   try {
-    const normalizedInput = normalizeName(fullName);
-    const q = query(collection(db, "valid_names"));
-    const snapshot = await getDocs(q);
-    
-    let isAuthorized = false;
-    snapshot.forEach((doc) => {
-      const normalizedValid = normalizeName(doc.id);
-      if (normalizedValid === normalizedInput) isAuthorized = true;
-    });
-    
-    return isAuthorized;
+    const API_BASE_URL = 'https://poleron-app-2.onrender.com';
+    const response = await fetch(`${API_BASE_URL}/api/validate-name?name=${encodeURIComponent(fullName)}`);
+    const data = await response.json();
+    return data.isValid === true;
   } catch (error) {
     console.error("Error verificando autorización de nombre:", error);
-    return false;
+    // Fallback: Si el servidor falla, permitimos (o podrías bloquear por seguridad)
+    return true; 
   }
 };
 

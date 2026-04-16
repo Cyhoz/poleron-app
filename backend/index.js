@@ -9,6 +9,19 @@ const axios = require('axios');
 const { sendOrderEmail } = require('./utils/emailService');
 const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
+const path = require('path');
+const fs = require('fs');
+
+// Carga de diccionarios de nombres/apellidos
+let CHILEAN_NAMES = [];
+let CHILEAN_SURNAMES = [];
+try {
+    CHILEAN_NAMES = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'chilean_names.json'), 'utf8'));
+    CHILEAN_SURNAMES = JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'chilean_surnames.json'), 'utf8'));
+    console.log(`✅ Diccionario cargado: ${CHILEAN_NAMES.length} nombres, ${CHILEAN_SURNAMES.length} apellidos.`);
+} catch (err) {
+    console.error('⚠️ No se pudieron cargar los diccionarios de nombres:', err.message);
+}
 
 const app = express();
 
@@ -93,20 +106,35 @@ app.get('/api/schools', async (req, res) => {
  * @swagger
  * /api/validate-name:
  *   get:
- *     summary: Valida un nombre de identidad
- *     description: Verifica si un nombre y apellido figuran en la base de datos de "nombres reales" autorizados para el sistema.
+ *     summary: Valida un nombre de identidad contra el diccionario global
+ *     description: Verifica si un nombre completo está compuesto por nombres y apellidos reales comunes en Chile.
  */
 app.get('/api/validate-name', async (req, res) => {
     const { name } = req.query;
     if (!name) return res.status(400).json({ error: 'Nombre requerido' });
 
     try {
-        const nameUpper = name.toUpperCase().trim();
-        const nameDoc = await db.collection('valid_names').doc(nameUpper).get();
+        const fullUpper = name.toUpperCase().trim();
+        const parts = fullUpper.split(/\s+/);
+        
+        if (parts.length < 2) return res.json({ isValid: false, reason: 'Se requiere nombre y apellido' });
+
+        // 1. Verificación en valid_names (Autorización específica de la administración)
+        const nameDoc = await db.collection('valid_names').doc(fullUpper).get();
         if (nameDoc.exists) {
-            return res.json({ isValid: true });
+            return res.json({ isValid: true, source: 'AUTHORIZED_LIST' });
         }
-        res.json({ isValid: false });
+
+        // 2. Verificación en Diccionario Global (Blindaje contra nombres falsos)
+        // Comprobar si al menos un nombre y un apellido están en el diccionario
+        const hasValidName = parts.some(p => CHILEAN_NAMES.includes(p));
+        const hasValidSurname = parts.some(p => CHILEAN_SURNAMES.includes(p));
+
+        if (hasValidName && hasValidSurname) {
+            return res.json({ isValid: true, source: 'GLOBAL_DICTIONARY' });
+        }
+
+        res.json({ isValid: false, reason: 'Nombre no reconocido en la base de datos oficial' });
     } catch (error) {
         res.status(500).json({ error: 'Error al validar nombre' });
     }

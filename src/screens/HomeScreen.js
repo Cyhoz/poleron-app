@@ -42,7 +42,7 @@ export default function HomeScreen({ navigation }) {
     const defaultMsg = 'Hola, tengo una duda sobre la app Polerón.';
     const text = customMessage || defaultMsg;
     const url = `whatsapp://send?phone=${phone}&text=${encodeURIComponent(text)}`;
-    
+
     Linking.canOpenURL(url).then(supported => {
       if (supported) {
         Linking.openURL(url);
@@ -73,144 +73,140 @@ export default function HomeScreen({ navigation }) {
   const isManager = role === 'manager' || isAdmin;
 
   if (isLoading) {
-      return (
-          <View style={[styles.container, styles.centered]}>
-              <ActivityIndicator size="large" color="#3B82F6" />
-          </View>
-      );
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <ActivityIndicator size="large" color="#3B82F6" />
+      </View>
+    );
   }
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.topBar}>
-          <View style={styles.logoRow}>
-            <Image 
-                source={require('../../assets/icon.png')} 
-                style={styles.miniLogo} 
-                resizeMode="contain"
-            />
-            <Text style={styles.brandName}>Tu Polerón</Text>
-          </View>
+        <View style={styles.logoRow}>
+          <Image
+            source={require('../../assets/icon.png')}
+            style={styles.miniLogo}
+            resizeMode="contain"
+          />
+          <Text style={styles.brandName}>Tu Polerón</Text>
+        </View>
 
-          <View style={styles.topActions}>
-            <TouchableOpacity 
-                style={styles.circleBtn} 
-                onPress={() => navigation.navigate('Admin')}
-                activeOpacity={0.7}
-            >
-                <Settings color="#9CA3AF" size={22} />
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-                style={styles.circleBtn} 
-                onPress={handleAuthPress}
-            >
-                {user ? <LogOut color="#EF4444" size={22} /> : <User color="#9CA3AF" size={22} />}
-            </TouchableOpacity>
-          </View>
+        <View style={styles.topActions}>
+          <TouchableOpacity
+            style={styles.circleBtn}
+            onPress={() => navigation.navigate('Admin')}
+            activeOpacity={0.7}
+          >
+            <Settings color="#9CA3AF" size={22} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.circleBtn}
+            onPress={handleAuthPress}
+          >
+            {user ? <LogOut color="#EF4444" size={22} /> : <User color="#9CA3AF" size={22} />}
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
-            <View style={styles.logoContainer}>
-                <Image 
-                    source={require('../../assets/icon.png')} 
-                    style={styles.mainLogo} 
-                    resizeMode="contain"
-                />
-            </View>
-            <Text style={styles.welcomeText}>
-                {user ? `¡Hola, ${profile?.nombre || 'Usuario'}!` : '¡Bienvenido!'}
-            </Text>
-            <Text style={styles.subtitle}>
-                Tu plataforma integral para el polerón de tu generación.
-            </Text>
+          <View style={styles.logoContainer}>
+            <Image
+              source={require('../../assets/icon.png')}
+              style={styles.mainLogo}
+              resizeMode="contain"
+            />
+          </View>
+          <Text style={styles.welcomeText}>
+            {user ? `¡Hola, ${profile?.nombre || 'Usuario'}!` : '¡Bienvenido!'}
+          </Text>
+          <Text style={styles.subtitle}>
+            Tu plataforma integral para el polerón de tu generación.
+          </Text>
         </View>
 
         {!user ? (
-            <View style={styles.authCard}>
-                <Text style={styles.authTitle}>Comienza Ahora</Text>
-                <Text style={styles.authDesc}>Inicia sesión para guardar tus medidas y gestionar pedidos.</Text>
-                <TouchableOpacity 
-                    style={styles.loginBtn}
-                    onPress={() => navigation.navigate('Auth')}
-                >
-                    <Text style={styles.loginBtnText}>Ingresar / Registrarse</Text>
-                </TouchableOpacity>
-            </View>
+          <View style={styles.authCard}>
+            <Text style={styles.authTitle}>Comienza Ahora</Text>
+            <Text style={styles.authDesc}>Inicia sesión para guardar tus medidas y gestionar pedidos.</Text>
+            <TouchableOpacity
+              style={styles.loginBtn}
+              onPress={() => navigation.navigate('Auth')}
+            >
+              <Text style={styles.loginBtnText}>Ingresar / Registrarse</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
-            <View style={styles.profileBadge}>
-                <LayoutDashboard size={16} color="#3B82F6" />
-                <Text style={styles.profileBadgeText}>
-                    Panel de {role === 'admin' ? 'Administrador' : role === 'manager' ? 'Encargado' : 'Alumno'}
-                </Text>
-            </View>
+          <View style={styles.profileBadge}>
+            <LayoutDashboard size={16} color="#3B82F6" />
+            <Text style={styles.profileBadgeText}>
+              Panel de {role === 'admin' ? 'Administrador' : role === 'manager' ? 'Encargado' : 'Alumno'}
+            </Text>
+          </View>
         )}
 
         <View style={styles.actionsGrid}>
-            <Text style={styles.sectionTitle}>Acciones Disponibles</Text>
-            
-            {/* Botón Calculadora: Solo visible tras iniciar sesión */}
-            {user && (
-                <TouchableOpacity 
-                    style={styles.actionCard}
-                    onPress={() => navigation.navigate('Client')}
-                    activeOpacity={0.8}
-                >
-                    <View style={[styles.actionIcon, { backgroundColor: '#3B82F620' }]}>
-                        <Calculator color="#3B82F6" size={28} />
-                    </View>
-                    <View style={styles.actionInfo}>
-                        <Text style={styles.actionTitle}>Calculadora de Talla</Text>
-                        <Text style={styles.actionDesc}>Obtén tu talla ideal ingresando tus medidas.</Text>
-                    </View>
-                </TouchableOpacity>
-            )}
 
-            {/* Botón Pedido Grupal: Solo Encargado y Admin */}
-            {(isManager || isAdmin) && (
-                <TouchableOpacity 
-                    style={[styles.actionCard, { marginTop: 16 }]}
-                    onPress={() => navigation.navigate('TeacherOrder')}
-                    activeOpacity={0.8}
-                >
-                    <View style={[styles.actionIcon, { backgroundColor: '#10B98120' }]}>
-                        <ShoppingBag color="#10B981" size={28} />
-                    </View>
-                    <View style={styles.actionInfo}>
-                        <Text style={styles.actionTitle}>Realizar Pedido Grupal</Text>
-                        <Text style={styles.actionDesc}>Gestiona el pedido completo de tu curso.</Text>
-                    </View>
-                </TouchableOpacity>
-            )}
+          {/* Botón Calculadora: Solo visible tras iniciar sesión */}
+          {user && (
+            <TouchableOpacity
+              style={styles.actionCard}
+              onPress={() => navigation.navigate('Client')}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.actionIcon, { backgroundColor: '#3B82F620' }]}>
+                <Calculator color="#3B82F6" size={28} />
+              </View>
+              <View style={styles.actionInfo}>
+                <Text style={styles.actionTitle}>Calculadora de Talla</Text>
+                <Text style={styles.actionDesc}>Obtén tu talla ideal ingresando tus medidas.</Text>
+              </View>
+            </TouchableOpacity>
+          )}
 
-            {/* Botón Panel Administrador: Solo visible para Admins */}
-            {isAdmin && (
-                <TouchableOpacity 
-                    style={[styles.actionCard, { marginTop: 16, borderColor: '#3B82F6' }]}
-                    onPress={() => navigation.navigate('Admin')}
-                    activeOpacity={0.8}
-                >
-                    <View style={[styles.actionIcon, { backgroundColor: '#3B82F620' }]}>
-                        <LayoutDashboard color="#3B82F6" size={28} />
-                    </View>
-                    <View style={styles.actionInfo}>
-                        <Text style={styles.actionTitle}>Panel Administrador</Text>
-                        <Text style={styles.actionDesc}>Configura tallas, gestiona pedidos y notificaciones.</Text>
-                    </View>
-                </TouchableOpacity>
-            )}
+          {/* Botón Pedido Grupal: Solo Encargado y Admin */}
+          {(isManager || isAdmin) && (
+            <TouchableOpacity
+              style={[styles.actionCard, { marginTop: 16 }]}
+              onPress={() => navigation.navigate('TeacherOrder')}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.actionIcon, { backgroundColor: '#10B98120' }]}>
+                <ShoppingBag color="#10B981" size={28} />
+              </View>
+              <View style={styles.actionInfo}>
+                <Text style={styles.actionTitle}>Realizar Pedido Grupal</Text>
+                <Text style={styles.actionDesc}>Gestiona el pedido completo de tu curso.</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {/* Botón Panel Administrador: Solo visible para Admins */}
+          {isAdmin && (
+            <TouchableOpacity
+              style={[styles.actionCard, { marginTop: 16, borderColor: '#3B82F6' }]}
+              onPress={() => navigation.navigate('Admin')}
+              activeOpacity={0.8}
+            >
+              <View style={[styles.actionIcon, { backgroundColor: '#3B82F620' }]}>
+                <LayoutDashboard color="#3B82F6" size={28} />
+              </View>
+              <View style={styles.actionInfo}>
+                <Text style={styles.actionTitle}>Panel Administrador</Text>
+                <Text style={styles.actionDesc}>Configura tallas, gestiona pedidos y notificaciones.</Text>
+              </View>
+            </TouchableOpacity>
+          )}
         </View>
 
-        <View style={styles.infoFooter}>
-            <Text style={styles.footerText}>Versión 1.2.2</Text>
-            <Text style={styles.footerText}>© 2024 Tu Polerón App</Text>
-        </View>
+
       </ScrollView>
 
       {/* BOTÓN FLOTANTE WHATSAPP */}
-      <TouchableOpacity 
-        style={styles.whatsappFab} 
+      <TouchableOpacity
+        style={styles.whatsappFab}
         onPress={openWhatsApp}
         activeOpacity={0.8}
       >
