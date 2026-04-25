@@ -5,7 +5,7 @@ echo ===================================================
 echo.
 
 :: 1. Subir a la raiz para ejecutar correctamente
-cd ..
+cd /d %~dp0\..
 
 :: 2. Limpieza de cache de Metro
 echo [1/4] Limpiando cache de empaquetado...

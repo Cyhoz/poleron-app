@@ -1,11 +1,10 @@
 import { collection, addDoc, getDocs, deleteDoc, doc, setDoc, getDoc, query, where, onSnapshot, writeBatch } from 'firebase/firestore';
 import { db } from './firebaseConfig';
+const API_BASE_URL = 'https://poleron-app-2.onrender.com';
+
 
 export const saveOrder = async (orderData) => {
   try {
-    // Definir la URL de tu API en Render (igual que en ClientScreen)
-    const API_BASE_URL = 'https://poleron-app-2.onrender.com';
-    
     // Enviamos el pedido al backend para que sea cifrado y guardado de forma segura
     const response = await fetch(`${API_BASE_URL}/api/orders`, {
       method: 'POST',
@@ -17,33 +16,6 @@ export const saveOrder = async (orderData) => {
 
     if (!response.ok) throw new Error('Error en servidor seguro');
     const result = await response.json();
-
-    // Notificación Push para el administrador
-    try {
-      const adminDoc = await getDoc(doc(db, "config", "admin"));
-      if (adminDoc.exists()) {
-        const { pushToken } = adminDoc.data();
-        if (pushToken) {
-           await fetch('https://exp.host/--/api/v2/push/send', {
-              method: 'POST',
-              headers: {
-                Accept: 'application/json',
-                'Accept-encoding': 'gzip, deflate',
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                to: pushToken,
-                sound: 'default',
-                title: '🛒 ¡Nuevo Polerón Pedido!',
-                body: `${orderData.personalInfo.nombre} ${orderData.personalInfo.apellido || ''} de ${orderData.personalInfo.curso} ordenó talla ${orderData.tallaElegida}.`,
-                data: { orderId: result.id || 'new' },
-              }),
-            });
-        }
-      }
-    } catch (e) {
-      console.log('Error enviando notificación Push desde el cliente:', e);
-    }
     
     return true;
   } catch (error) {
@@ -85,7 +57,6 @@ export const subscribeToOrders = (callback) => {
 
 export const getOrders = async () => {
   try {
-    const API_BASE_URL = 'https://poleron-app-2.onrender.com';
     const response = await fetch(`${API_BASE_URL}/api/admin/orders`);
     if (!response.ok) throw new Error('Error al recuperar pedidos seguros');
     const data = await response.json();
@@ -109,10 +80,10 @@ export const deleteOrder = async (id) => {
 export const saveAdminSizes = async (sizes) => {
   try {
     await setDoc(doc(db, "config", "sizes"), sizes);
-    return true;
+    return { success: true };
   } catch (error) {
     console.error("Error guardando configuraciones", error);
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
@@ -132,20 +103,20 @@ export const getAdminSizes = async () => {
 export const saveAdminPushToken = async (token) => {
   try {
     await setDoc(doc(db, "config", "admin"), { pushToken: token }, { merge: true });
-    return true;
+    return { success: true };
   } catch (error) {
     console.error("Error saving admin push token", error);
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
 export const saveAppData = async (data) => {
   try {
     await setDoc(doc(db, "config", "appData"), data);
-    return true;
+    return { success: true };
   } catch (error) {
     console.error("Error saving app data", error);
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
@@ -174,7 +145,6 @@ export const subscribeToAppData = (callback) => {
 
 export const getProducts = async () => {
     try {
-        const API_BASE_URL = 'https://poleron-app-2.onrender.com';
         const response = await fetch(`${API_BASE_URL}/api/products`);
         return await response.json();
     } catch (error) {
@@ -203,6 +173,7 @@ export const checkNameAuthorized = async (fullName) => {
 
     // 1. Verificar en lista de alumnos autorizados (Búsqueda DIRECTA por ID)
     // Esto gasta solo 1 lectura de Firestore en lugar de escanear todo.
+    // IMPORTANTE: Aseguramos que la búsqueda sea sobre el nombre normalizado
     const validSnap = await getDoc(doc(db, "valid_names", normalizedTarget));
     if (validSnap.exists()) return true;
 
@@ -246,22 +217,24 @@ export const auditSchool = (schoolName, authorizedSchools = []) => {
 
 export const saveValidName = async (name) => {
   try {
-    const nameUpper = name.toUpperCase().trim();
-    await setDoc(doc(db, "valid_names", nameUpper), { addedAt: new Date().toISOString() });
-    return true;
+    const normalized = normalizeName(name);
+    if (!normalized) return { success: false, error: "Nombre inválido" };
+    await setDoc(doc(db, "valid_names", normalized), { addedAt: new Date().toISOString() });
+    return { success: true };
   } catch (error) {
     console.error("Error guardando nombre válido", error);
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
 export const deleteValidName = async (name) => {
   try {
-    await deleteDoc(doc(db, "valid_names", name.toUpperCase().trim()));
-    return true;
+    const normalized = normalizeName(name);
+    await deleteDoc(doc(db, "valid_names", normalized));
+    return { success: true };
   } catch (error) {
     console.error("Error borrando nombre válido", error);
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
@@ -274,6 +247,33 @@ export const subscribeToValidNames = (callback) => {
     });
     callback(names.sort());
   });
+};
+
+export const normalizeExistingValidNames = async () => {
+  try {
+    const snap = await getDocs(collection(db, "valid_names"));
+    const batch = writeBatch(db);
+    let count = 0;
+    
+    for (const docSnap of snap.docs) {
+      const oldId = docSnap.id;
+      const newId = normalizeName(oldId);
+      if (oldId !== newId) {
+        batch.set(doc(db, "valid_names", newId), { 
+          ...docSnap.data(), 
+          migratedAt: new Date().toISOString() 
+        });
+        batch.delete(doc(db, "valid_names", oldId));
+        count++;
+      }
+    }
+    
+    if (count > 0) await batch.commit();
+    return { success: true, count };
+  } catch (error) {
+    console.error("Error normalizando nombres:", error);
+    return { success: false, error: error.message };
+  }
 };
 
 export const getAuditLists = async () => {
@@ -317,22 +317,24 @@ export const checkIdentityOffline = (fullName, lists) => {
 
 export const saveCommonName = async (name) => {
   try {
-    const nameUpper = name.toUpperCase().trim();
-    await setDoc(doc(db, "common_names", nameUpper), { exists: true });
-    return true;
+    const normalized = normalizeName(name);
+    if (!normalized) return { success: false, error: "Nombre inválido" };
+    await setDoc(doc(db, "common_names", normalized), { exists: true });
+    return { success: true };
   } catch (error) {
     console.error("Error guardando nombre común", error);
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
 export const deleteCommonName = async (name) => {
   try {
-    await deleteDoc(doc(db, "common_names", name.toUpperCase().trim()));
-    return true;
+    const normalized = normalizeName(name);
+    await deleteDoc(doc(db, "common_names", normalized));
+    return { success: true };
   } catch (error) {
     console.error("Error borrando nombre común", error);
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
@@ -349,22 +351,24 @@ export const subscribeToCommonNames = (callback) => {
 
 export const saveCommonSurname = async (surname) => {
   try {
-    const snUpper = surname.toUpperCase().trim();
-    await setDoc(doc(db, "common_surnames", snUpper), { exists: true });
-    return true;
+    const normalized = normalizeName(surname);
+    if (!normalized) return { success: false, error: "Apellido inválido" };
+    await setDoc(doc(db, "common_surnames", normalized), { exists: true });
+    return { success: true };
   } catch (error) {
     console.error("Error guardando apellido común", error);
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
 export const deleteCommonSurname = async (surname) => {
   try {
-    await deleteDoc(doc(db, "common_surnames", surname.toUpperCase().trim()));
-    return true;
+    const normalized = normalizeName(surname);
+    await deleteDoc(doc(db, "common_surnames", normalized));
+    return { success: true };
   } catch (error) {
     console.error("Error borrando apellido común", error);
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
@@ -381,25 +385,37 @@ export const subscribeToCommonSurnames = (callback) => {
 
 export const seedDictionaryBatch = async (names, surnames) => {
   try {
-    const batch = writeBatch(db);
+    const totalOps = names.length + surnames.length;
+    console.log(`Iniciando sembrado de diccionario: ${names.length} nombres, ${surnames.length} apellidos. Total ops: ${totalOps}`);
     
-    names.forEach(name => {
-      const nameUpper = name.toUpperCase().trim();
-      const ref = doc(db, "common_names", nameUpper);
-      batch.set(ref, { exists: true });
-    });
+    // Función auxiliar para procesar en trozos de 500 (límite de Firestore)
+    const chunks = [];
+    const combined = [
+      ...names.map(n => ({ name: n, collection: "common_names" })),
+      ...surnames.map(s => ({ name: s, collection: "common_surnames" }))
+    ];
 
-    surnames.forEach(surname => {
-      const snUpper = surname.toUpperCase().trim();
-      const ref = doc(db, "common_surnames", snUpper);
-      batch.set(ref, { exists: true });
-    });
+    for (let i = 0; i < combined.length; i += 500) {
+      chunks.push(combined.slice(i, i + 500));
+    }
 
-    await batch.commit();
-    return true;
+    for (const chunk of chunks) {
+      const batch = writeBatch(db);
+      chunk.forEach(item => {
+        const normalized = normalizeName(item.name);
+        if (normalized) {
+          const ref = doc(db, item.collection, normalized);
+          batch.set(ref, { exists: true });
+        }
+      });
+      await batch.commit();
+      console.log(`Lote de ${chunk.length} procesado.`);
+    }
+
+    return { success: true };
   } catch (error) {
-    console.error("Error al poblar diccionario en lote", error);
-    return false;
+    console.error("Error al poblar diccionario en lote:", error);
+    return { success: false, error: error.message || String(error) };
   }
 };
 
@@ -436,23 +452,26 @@ export const registerCourseManager = async (uid, school, course) => {
       course,
       assignedAt: new Date().toISOString()
     });
-    return true;
+    return { success: true };
   } catch (error) {
     console.error("Error registrando encargado de curso:", error);
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
 export const saveCalculatorResult = async (resultData) => {
   try {
-    await addDoc(collection(db, "calculator_results"), {
+    const normalizedData = {
       ...resultData,
+      school: normalizeName(resultData.school),
+      course: normalizeName(resultData.course),
       timestamp: new Date().toISOString()
-    });
-    return true;
+    };
+    await addDoc(collection(db, "calculator_results"), normalizedData);
+    return { success: true };
   } catch (error) {
     console.error("Error guardando resultado de calculadora:", error);
-    return false;
+    return { success: false, error: error.message };
   }
 };
 
@@ -460,8 +479,8 @@ export const getCalculatorResultsByCourse = async (school, course) => {
   try {
     const q = query(
       collection(db, "calculator_results"),
-      where("school", "==", school),
-      where("course", "==", course)
+      where("school", "==", normalizeName(school)),
+      where("course", "==", normalizeName(course))
     );
     const querySnapshot = await getDocs(q);
     const results = [];
@@ -481,11 +500,62 @@ export const getAllManagers = async () => {
     const querySnapshot = await getDocs(q);
     const managers = [];
     querySnapshot.forEach((doc) => {
-      managers.push({ id: doc.id, ...doc.data() });
+      managers.push({ uid: doc.id, ...doc.data() });
     });
     return managers;
   } catch (error) {
-    console.error("Error obteniendo lista de encargados:", error);
+    console.error("Error obteniendo encargados:", error);
     return [];
+  }
+};
+
+export const getAllUsers = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/users`);
+    return await response.json();
+  } catch (error) {
+    console.error("Error obteniendo usuarios:", error);
+    return [];
+  }
+};
+
+export const deleteUserAccount = async (uid) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/users/${uid}`, {
+      method: 'DELETE'
+    });
+    const result = await response.json();
+    return result.success;
+  } catch (error) {
+    console.error("Error eliminando usuario:", error);
+    return false;
+  }
+};
+
+export const createUserAccount = async (userData) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(userData)
+    });
+    const result = await response.json();
+    if (result.error) throw new Error(result.error);
+    return result;
+  } catch (error) {
+    console.error("Error creando usuario:", error);
+    throw error;
+  }
+};
+
+export const clearSystemData = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/admin/system/clear-all`, {
+      method: 'POST'
+    });
+    return await response.json();
+  } catch (error) {
+    console.error("Error en limpieza del sistema:", error);
+    return { success: false, error: error.message };
   }
 };

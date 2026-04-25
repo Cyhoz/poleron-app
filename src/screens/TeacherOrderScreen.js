@@ -3,13 +3,14 @@ import {
   View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView,
   Alert, ActivityIndicator, Modal, FlatList, Image, Linking
 } from 'react-native';
-import { UploadCloud, X, Plus, Trash2, ChevronDown, User, Phone, Mail, FileText, File, MessageCircle } from 'lucide-react-native';
+import { UploadCloud, X, Plus, Trash2, ChevronDown, User, Phone, Mail, FileText, MessageCircle } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system';
 import { REGIONES, CURSOS, COLEGIOS_REALES } from '../constants/chileData';
 import {
   getProducts, subscribeToValidNames, getUserProfile, getCalculatorResultsByCourse,
-  normalizeName, checkNameAuthorized, auditSchool, getAuditLists, checkIdentityOffline
+  normalizeName, checkNameAuthorized, auditSchool, getAuditLists, checkIdentityOffline,
+  subscribeToAppData, saveOrder
 } from '../services/firebaseOrderService';
 import { auth } from '../services/firebaseConfig';
 
@@ -33,7 +34,7 @@ export default function TeacherOrderScreen({ navigation }) {
   // Student Cart
   const [students, setStudents] = useState([]);
   const [currentStudent, setCurrentStudent] = useState({
-    nombre: '', apellido: '', apodo: '', talla: 'S'
+    nombre: '', apodo: '', talla: 'S'
   });
 
   const [isLoading, setIsLoading] = useState(true);
@@ -66,7 +67,8 @@ export default function TeacherOrderScreen({ navigation }) {
     }
 
     const initData = async () => {
-      setIsLoading(true);
+      try {
+        setIsLoading(true);
       const [prodList, profile] = await Promise.all([
         getProducts(),
         getUserProfile(auth.currentUser.uid)
@@ -91,6 +93,11 @@ export default function TeacherOrderScreen({ navigation }) {
       }
       
       setIsLoading(false);
+      } catch (err) {
+        console.error("Error in initData:", err);
+        Alert.alert('Error', 'No se pudieron cargar los datos iniciales.');
+        setIsLoading(false);
+      }
     };
 
     const unsubValidNames = subscribeToValidNames((names) => {
@@ -99,10 +106,11 @@ export default function TeacherOrderScreen({ navigation }) {
 
     const unsubAppData = subscribeToAppData((data) => {
       if (data?.whatsappSupport) setWhatsappNumber(data.whatsappSupport);
-      if (data?.schools) {
-        setSchoolsList(data.schools.map(s => typeof s === 'string' ? s : s.nombre));
+      if (Array.isArray(data?.schools)) {
+        setSchoolsList(data.schools.map(s => typeof s === 'string' ? s : (s?.nombre || 'Colegio Desconocido')));
       }
     });
+    
 
     getAuditLists().then(setAuditLists);
 
@@ -123,10 +131,10 @@ export default function TeacherOrderScreen({ navigation }) {
     else setIsStudentNameValid(checkIdentityOffline(currentStudent.nombre, auditLists));
   }, [currentStudent.nombre, auditLists]);
 
+  // Ya no necesitamos la validación del apellido por separado
   useEffect(() => {
-    if (!currentStudent.apellido.trim()) setIsStudentSurnameValid(null);
-    else setIsStudentSurnameValid(checkIdentityOffline(`${currentStudent.nombre} ${currentStudent.apellido}`, auditLists));
-  }, [currentStudent.nombre, currentStudent.apellido, auditLists]);
+    setIsStudentSurnameValid(null);
+  }, []);
 
   const openSoporteWhatsApp = () => {
     const phone = whatsappNumber || '+56900000000';
@@ -187,13 +195,13 @@ export default function TeacherOrderScreen({ navigation }) {
   };
 
   const addStudent = async () => {
-    if (!currentStudent.nombre || !currentStudent.apellido) {
-      Alert.alert('Error', 'Nombre y Apellido son obligatorios.');
+    if (!currentStudent.nombre) {
+      Alert.alert('Error', 'El Nombre es obligatorio.');
       return;
     }
 
-    setIsLoading(true); // Reusamos el estado de carga para el feedback visual
-    const fullName = `${currentStudent.nombre} ${currentStudent.apellido}`;
+    setIsLoading(true);
+    const fullName = currentStudent.nombre;
     const isAuthorized = await checkNameAuthorized(fullName);
     setIsLoading(false);
 
@@ -205,8 +213,8 @@ export default function TeacherOrderScreen({ navigation }) {
       return;
     }
 
-    setStudents([...students, { ...currentStudent, id: Date.now().toString() }]);
-    setCurrentStudent({ nombre: '', apellido: '', apodo: '', talla: 'S' });
+    setStudents([...students, { ...currentStudent, id: Date.now().toString(), apellido: '' }]);
+    setCurrentStudent({ nombre: '', apodo: '', talla: 'S' });
   };
 
   const removeStudent = (id) => {
@@ -260,46 +268,67 @@ export default function TeacherOrderScreen({ navigation }) {
     
     setIsImporting(true);
     try {
+      console.log(`Importando desde calculadora para: ${groupInfo.colegio} | ${groupInfo.curso}`);
       const results = await getCalculatorResultsByCourse(groupInfo.colegio, groupInfo.curso);
+      console.log(`Resultados encontrados: ${results.length}`);
+
       if (results.length === 0) {
         Alert.alert('Sin Datos', 'No se encontraron alumnos de este curso que hayan usado la calculadora aún.');
       } else {
-        // BLINDAJE: Filtrar solo los nombres autorizados
-        const authorizedResults = results.filter(res => {
-          const fullName = `${res.userName}`;
-          return validNames.includes(normalizeName(fullName));
-        });
+        // Filtrar usando la lógica de auditoría robusta (offline)
+        let authorizedResults = results;
+        const isAuditActive = auditLists.validNames.length > 0 || auditLists.commonNames.length > 0;
+        
+        if (isAuditActive) {
+          authorizedResults = results.filter(res => {
+            const isAuthorized = checkIdentityOffline(res.userName, auditLists);
+            if (!isAuthorized) console.log(`Alumno filtrado (identidad no verificada): ${res.userName}`);
+            return isAuthorized;
+          });
 
-        if (authorizedResults.length < results.length) {
-          Alert.alert(
-            'Alumnos Filtrados', 
-            `Se detectaron ${results.length} resultados, pero solo ${authorizedResults.length} están en la lista oficial. Solo estos han sido importados.`
-          );
+          if (authorizedResults.length < results.length) {
+            const filteredCount = results.length - authorizedResults.length;
+            Alert.alert(
+              'Alumnos Filtrados', 
+              `Se detectaron ${results.length} resultados, pero ${filteredCount} no pasaron la verificación de identidad. Solo ${authorizedResults.length} han sido importados.`
+            );
+          }
+        } else {
+          console.warn("Las listas de auditoría están vacías. Se importarán todos los resultados sin filtrar.");
         }
 
         // Mapear resultados al formato de la lista de estudiantes
-        const importedStudents = authorizedResults.map(r => ({
-          id: r.id || Date.now().toString() + Math.random(),
-          nombre: r.userName.split(' ')[0],
-          apellido: r.userName.split(' ').slice(1).join(' '),
-          apodo: '',
-          talla: r.size || 'S'
-        }));
+        const importedStudents = authorizedResults.map(r => {
+          return {
+            id: r.id || Date.now().toString() + Math.random(),
+            nombre: r.userName || 'Sin Nombre',
+            apellido: '',
+            apodo: '',
+            talla: r.size || 'S'
+          };
+        });
         
-        // Evitar duplicados (por nombre completo)
+        // Evitar duplicados (por nombre completo normalizado)
         const currentNames = students.map(s => normalizeName(`${s.nombre} ${s.apellido}`));
-        const newOnes = importedStudents.filter(s => !currentNames.includes(normalizeName(`${s.nombre} ${s.apellido}`)));
+        const newOnes = importedStudents.filter(s => {
+          const fullName = normalizeName(`${s.nombre} ${s.apellido}`);
+          return !currentNames.includes(fullName);
+        });
         
-        if (newOnes.length === 0 && results.length > 0) {
-          Alert.alert('Información', 'Todos los alumnos autorizados ya están en la lista.');
-        } else if (newOnes.length > 0) {
-          setStudents([...students, ...newOnes]);
+        if (newOnes.length === 0) {
+          if (results.length > 0 && authorizedResults.length > 0) {
+            Alert.alert('Información', 'Todos los alumnos autorizados ya están en la lista.');
+          } else if (authorizedResults.length === 0 && results.length > 0) {
+            Alert.alert('Atención', 'No se importó nada porque ninguno de los alumnos cumple con los criterios de identidad autorizada.');
+          }
+        } else {
+          setStudents(prev => [...prev, ...newOnes]);
           Alert.alert('Éxito', `Se han importado ${newOnes.length} alumnos correctamente.`);
         }
       }
     } catch (error) {
-      console.error(error);
-      Alert.alert('Error', 'No se pudieron importar los datos.');
+      console.error("Error en handleImportFromCalculator:", error);
+      Alert.alert('Error', 'No se pudieron importar los datos. Verifica tu conexión.');
     } finally {
       setIsImporting(false);
     }
@@ -474,8 +503,8 @@ export default function TeacherOrderScreen({ navigation }) {
           
           <View style={styles.addStudentBox}>
             <View style={styles.row}>
-              <View style={{flex: 1, marginRight: 8}}>
-                <Text style={styles.label}>Nombre</Text>
+              <View style={{flex: 1}}>
+                <Text style={styles.label}>Nombre Completo</Text>
                 <TextInput 
                   style={[
                     styles.smallInput,
@@ -484,18 +513,8 @@ export default function TeacherOrderScreen({ navigation }) {
                   ]} 
                   value={currentStudent.nombre} 
                   onChangeText={t => setCurrentStudent({...currentStudent, nombre: t})} 
-                />
-              </View>
-              <View style={{flex: 1}}>
-                <Text style={styles.label}>Apellido</Text>
-                <TextInput 
-                  style={[
-                    styles.smallInput,
-                    isStudentSurnameValid === true && styles.inputValid,
-                    isStudentSurnameValid === false && styles.inputInvalid
-                  ]} 
-                  value={currentStudent.apellido} 
-                  onChangeText={t => setCurrentStudent({...currentStudent, apellido: t})} 
+                  placeholder="Ej: Juan Pérez"
+                  placeholderTextColor="#64748B"
                 />
               </View>
             </View>
@@ -517,13 +536,13 @@ export default function TeacherOrderScreen({ navigation }) {
             <TouchableOpacity 
               style={[
                 styles.addButton, 
-                (isStudentNameValid !== true || isStudentSurnameValid !== true) && {opacity: 0.5}
+                isStudentNameValid !== true && {opacity: 0.5}
               ]} 
               onPress={addStudent}
-              disabled={isStudentNameValid !== true || isStudentSurnameValid !== true}
+              disabled={isStudentNameValid !== true}
             >
               <Plus color="#fff" size={20} style={{marginRight: 8}} />
-              <Text style={styles.primaryButtonText}>Añadir Manualmente</Text>
+              <Text style={styles.primaryButtonText}>Añadir Alumno</Text>
             </TouchableOpacity>
 
             <View style={styles.managerActionBox}>
@@ -588,7 +607,7 @@ export default function TeacherOrderScreen({ navigation }) {
             </Text>
           </View>
 
-          <TouchableOpacity style={styles.primaryButton} onPress={handleOrderSubmission}>
+          <TouchableOpacity style={[styles.primaryButton, isSubmitting && {opacity: 0.7}]} onPress={handleOrderSubmission} disabled={isSubmitting}>
             {isSubmitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>Confirmar y Enviar Pedido</Text>}
           </TouchableOpacity>
           <TouchableOpacity onPress={() => setStep(2)} style={{marginTop: 15, alignSelf: 'center'}}>

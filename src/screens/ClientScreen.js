@@ -12,11 +12,13 @@ export default function ClientScreen({ navigation }) {
 
   const [measurements, setMeasurements] = useState({ pecho: '', largo: '', manga: '' });
   const [recommendedSize, setRecommendedSize] = useState(null);
+  const [chosenSize, setChosenSize] = useState(null);
 
   const [isLoading, setIsLoading] = useState(true);
   const [adminSizes, setAdminSizes] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDone, setIsDone] = useState(false);
 
   useEffect(() => {
     const initData = async () => {
@@ -67,26 +69,29 @@ export default function ClientScreen({ navigation }) {
       found = sortedSizes[sortedSizes.length - 1];
     }
     setRecommendedSize(found);
+    setChosenSize(found !== 'No encontrada' ? found : (Object.keys(adminSizes).length > 0 ? Object.keys(adminSizes)[0] : 'S'));
     setStep(2);
-    
-    // Guardar automáticamente el resultado si hay perfil
-    if (userProfile) {
-      handleSaveResult(found);
-    }
   };
 
   const handleSaveResult = async (size) => {
     setIsSaving(true);
     const result = {
       userId: auth.currentUser.uid,
-      userName: userProfile.nombre,
+      userName: userProfile.nombre || 'Sin Nombre',
+      userEmail: auth.currentUser.email,
       size: size,
-      school: userProfile.school,
-      course: userProfile.course,
-      product: selectedProduct.nombre
+      school: userProfile.school || 'Sin Colegio',
+      course: userProfile.course || 'Sin Curso',
+      product: selectedProduct.nombre,
+      timestamp: new Date().toISOString()
     };
-    await saveCalculatorResult(result);
+    const res = await saveCalculatorResult(result);
     setIsSaving(false);
+    if (res.success) {
+      setIsDone(true);
+    } else {
+      Alert.alert('Error', 'No se pudo guardar la talla. Verifica tu conexión.');
+    }
   };
 
   if (isLoading) return <View style={styles.centered}><ActivityIndicator size="large" color="#3B82F6" /></View>;
@@ -134,21 +139,71 @@ export default function ClientScreen({ navigation }) {
         </View>
       )}
 
-      {step === 2 && (
+      {step === 2 && !isDone && (
         <View style={styles.resultContainer}>
           <Text style={styles.confirmTitle}>Tu Talla Ideal</Text>
-          <Text style={{color: '#94A3B8', textAlign: 'center', marginBottom: 20}}>
-            Según las medidas ingresadas, te recomendamos la siguiente talla:
+          <Text style={{color: '#94A3B8', textAlign: 'center', marginBottom: 15, fontSize: 13}}>
+            Según las medidas ingresadas, te proponemos la siguiente talla, pero puedes elegir la que prefieras:
           </Text>
-          <View style={styles.sizeBadge}><Text style={styles.sizeText}>{recommendedSize}</Text></View>
-          <Text style={{color: '#E2E8F0', fontSize: 16, textAlign: 'center', marginVertical: 20, paddingHorizontal: 15, lineHeight: 24}}>
-            {userProfile 
-              ? `¡Listo! Tu talla ha sido guardada y compartida automáticamente con el encargado de tu curso (${userProfile.course}).`
-              : "Por favor, informa esta talla a tu Profesor(a) Jefe o a la persona encargada de realizar el pedido grupal."
-            }
+          
+          <View style={styles.sizesGrid}>
+            {adminSizes && Object.keys(adminSizes).length > 0 ? (
+              Object.keys(adminSizes).sort((a,b) => (adminSizes[a].pecho || 0) - (adminSizes[b].pecho || 0)).map((size) => (
+                <TouchableOpacity 
+                  key={size} 
+                  style={[
+                    styles.sizeOption, 
+                    chosenSize === size && styles.sizeOptionSelected,
+                    recommendedSize === size && styles.sizeOptionRecommended
+                  ]} 
+                  onPress={() => setChosenSize(size)}
+                >
+                  <Text style={[styles.sizeOptionText, chosenSize === size && {color: '#fff'}]}>{size}</Text>
+                  {recommendedSize === size && <Text style={styles.recBadge}>Sugerida</Text>}
+                </TouchableOpacity>
+              ))
+            ) : (
+              <ActivityIndicator color="#3B82F6" />
+            )}
+          </View>
+
+          <View style={styles.summaryBox}>
+            <Text style={styles.summaryLabel}>Talla Seleccionada:</Text>
+            <Text style={styles.summaryValue}>{chosenSize}</Text>
+          </View>
+
+          <Text style={styles.infoText}>
+            Esta elección se enviará al encargado de tu curso para el pedido grupal.
           </Text>
-          <TouchableOpacity style={[styles.submitButton, { backgroundColor: '#3B82F6', width: '100%' }]} onPress={() => navigation.goBack()}>
-            <Text style={styles.submitButtonText}>Entendido, Volver a Inicio</Text>
+
+          <TouchableOpacity 
+            style={[styles.submitButton, { backgroundColor: '#10B981' }]} 
+            onPress={() => handleSaveResult(chosenSize)}
+            disabled={isSaving}
+          >
+            {isSaving ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitButtonText}>Confirmar y Guardar Talla</Text>}
+          </TouchableOpacity>
+          
+          <TouchableOpacity 
+            style={{marginTop: 15, alignSelf: 'center'}} 
+            onPress={() => setStep(1)}
+          >
+            <Text style={{color: '#94A3B8'}}>Volver a mis medidas</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {isDone && (
+        <View style={styles.resultContainer}>
+          <View style={styles.successIconBox}>
+            <Text style={{fontSize: 50}}>✅</Text>
+          </View>
+          <Text style={styles.confirmTitle}>¡Talla Guardada!</Text>
+          <Text style={styles.successText}>
+            Has seleccionado la talla **{chosenSize}**. Los datos ya están disponibles para el encargado de tu curso.
+          </Text>
+          <TouchableOpacity style={styles.submitButton} onPress={() => navigation.goBack()}>
+            <Text style={styles.submitButtonText}>Volver al Inicio</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -173,7 +228,33 @@ const styles = StyleSheet.create({
   submitButton: { backgroundColor: '#3B82F6', padding: 18, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   submitButtonText: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
   resultContainer: { backgroundColor: '#1E293B', padding: 25, borderRadius: 24, borderWidth: 1, borderColor: '#334155' },
-  confirmTitle: { fontSize: 22, fontWeight: 'bold', color: '#F1F5F9', marginBottom: 10, textAlign: 'center' },
-  sizeBadge: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#3B82F6', alignSelf: 'center', justifyContent: 'center', alignItems: 'center', marginBottom: 20, shadowColor: '#3B82F6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 },
-  sizeText: { fontSize: 36, fontWeight: 'bold', color: '#FFF' },
+  confirmTitle: { fontSize: 22, fontWeight: 'bold', color: '#F8FAFC', marginBottom: 10, textAlign: 'center' },
+  sizesGrid: { 
+    flexDirection: 'row', 
+    flexWrap: 'wrap', 
+    justifyContent: 'center', 
+    marginBottom: 20,
+    // Eliminamos 'gap' por compatibilidad y usamos margins en los hijos
+  },
+  sizeOption: { 
+    width: 65, 
+    height: 60, 
+    borderRadius: 15, 
+    backgroundColor: '#1E293B', 
+    justifyContent: 'center', 
+    alignItems: 'center', 
+    borderWidth: 1, 
+    borderColor: '#334155',
+    margin: 5 // Usamos margin en lugar de gap
+  },
+  sizeOptionSelected: { backgroundColor: '#10B981', borderColor: '#10B981', elevation: 4 },
+  sizeOptionRecommended: { borderColor: '#3B82F6', borderWidth: 2 },
+  sizeOptionText: { fontSize: 18, fontWeight: 'bold', color: '#94A3B8' },
+  recBadge: { position: 'absolute', bottom: -12, fontSize: 8, color: '#3B82F6', fontWeight: 'bold', textTransform: 'uppercase' },
+  summaryBox: { backgroundColor: '#0F172A', padding: 15, borderRadius: 15, alignItems: 'center', marginBottom: 20 },
+  summaryLabel: { color: '#64748B', fontSize: 12, textTransform: 'uppercase', marginBottom: 5 },
+  summaryValue: { fontSize: 28, fontWeight: 'bold', color: '#F1F5F9' },
+  infoText: { color: '#94A3B8', fontSize: 13, textAlign: 'center', marginBottom: 25, lineHeight: 18 },
+  successIconBox: { alignSelf: 'center', marginBottom: 20 },
+  successText: { color: '#F1F5F9', textAlign: 'center', marginBottom: 30, fontSize: 16, lineHeight: 24 }
 });

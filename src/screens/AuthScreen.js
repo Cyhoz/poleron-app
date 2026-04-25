@@ -25,6 +25,8 @@ export default function AuthScreen({ navigation }) {
   const [showCoursePicker, setShowCoursePicker] = useState(false);
   const [whatsappNumber, setWhatsappNumber] = useState('');
   const [showSchoolPicker, setShowSchoolPicker] = useState(false);
+  const [schoolsList, setSchoolsList] = useState([]);
+  const [filteredSchools, setFilteredSchools] = useState([]);
   
   // Estados de Auditoría
   const [auditLists, setAuditLists] = useState({ validNames: [], commonNames: [], commonSurnames: [] });
@@ -101,6 +103,8 @@ export default function AuthScreen({ navigation }) {
     try {
       if (isLogin) {
         await signInWithEmailAndPassword(auth, email, password);
+        Alert.alert('Éxito', 'Sesión iniciada correctamente');
+        navigation.replace('Home');
       } else {
         // Validar Colegio usando el servicio robusto (normalizado)
         if (!auditSchool(colegio, schoolsList)) {
@@ -113,7 +117,12 @@ export default function AuthScreen({ navigation }) {
         }
 
         // BLINDAJE: Verificar si el nombre está autorizado
-        const isAuthorized = await checkNameAuthorized(nombre);
+        // Priorizamos la validación offline si ya se realizó (ya que normaliza los nombres correctamente)
+        let isAuthorized = isNameValid;
+        if (isAuthorized === null || isAuthorized === false) {
+          isAuthorized = await checkNameAuthorized(nombre);
+        }
+        
         if (!isAuthorized) {
           Alert.alert(
             'Nombre No Autorizado',
@@ -135,18 +144,32 @@ export default function AuthScreen({ navigation }) {
             setLoading(false);
             return;
           }
-          await registerCourseManager(user.uid, colegio, curso);
+          const regRes = await registerCourseManager(user.uid, colegio, curso);
+          if (!regRes.success) {
+            await user.delete();
+            Alert.alert('Error de Conexión', `No se pudo registrar como encargado: ${regRes.error}`);
+            setLoading(false);
+            return;
+          }
         }
 
         // Guardar datos adicionales del usuario en Firestore
-        await setDoc(doc(db, "users", user.uid), {
-          nombre: nombre,
-          email: email,
-          school: colegio,
-          course: curso,
-          createdAt: new Date().toISOString(),
-          role: role
-        });
+        try {
+          await setDoc(doc(db, "users", user.uid), {
+            nombre: nombre,
+            email: email,
+            school: colegio,
+            course: curso,
+            createdAt: new Date().toISOString(),
+            role: role
+          });
+          Alert.alert('Éxito', 'Usuario creado correctamente');
+          navigation.replace('Home');
+        } catch (dbError) {
+          // Si falla el guardado del perfil, intentamos borrar el auth para no dejar cuentas huérfanas
+          await user.delete();
+          throw new Error(`Fallo al crear perfil en base de datos: ${dbError.message}`);
+        }
       }
     } catch (error) {
       console.error(error);
@@ -154,7 +177,9 @@ export default function AuthScreen({ navigation }) {
       if (error.code === 'auth/email-already-in-use') alertMsg = 'Este correo ya está registrado.';
       if (error.code === 'auth/wrong-password') alertMsg = 'Contraseña incorrecta.';
       if (error.code === 'auth/user-not-found') alertMsg = 'Usuario no encontrado.';
-      Alert.alert('Error', alertMsg);
+      if (error.code === 'auth/network-request-failed') alertMsg = 'Error de red. Verifica tu conexión a internet.';
+      
+      Alert.alert('Error de Autenticación', error.message || alertMsg);
     } finally {
       setLoading(false);
     }

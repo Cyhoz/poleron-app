@@ -3,7 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const { db } = require('./firebase');
+const { admin, db } = require('./firebase');
 const { encrypt, decrypt } = require('./utils/encryption');
 const axios = require('axios');
 const { sendOrderEmail } = require('./utils/emailService');
@@ -265,7 +265,7 @@ app.get('/api/admin/orders', async (req, res) => {
                 order.estudiantes = order.estudiantes.map(s => ({
                     ...s,
                     nombre: decrypt(s.nombre),
-                    apellido: decrypt(s.apellido),
+                    apellido: decrypt(s.apellido || ''),
                     apodo: s.apodo ? decrypt(s.apodo) : ''
                 }));
             }
@@ -274,6 +274,162 @@ app.get('/api/admin/orders', async (req, res) => {
         res.json(orders);
     } catch (error) {
         res.status(500).json({ error: 'No se pudieron recuperar los pedidos' });
+    }
+});
+
+/**
+ * @swagger
+ * /api/admin/users:
+ *   get:
+ *     summary: Lista todos los usuarios registrados
+ */
+app.get('/api/admin/users', async (req, res) => {
+    try {
+        const snapshot = await db.collection('users').get();
+        const users = [];
+        snapshot.forEach(doc => users.push({ uid: doc.id, ...doc.data() }));
+        res.json(users);
+    } catch (error) {
+        res.status(500).json({ error: 'Error obteniendo usuarios' });
+    }
+});
+
+/**
+ * @swagger
+ * /api/admin/users:
+ *   post:
+ *     summary: Crea un nuevo usuario (Auth + Firestore)
+ */
+app.post('/api/admin/users', async (req, res) => {
+    const { email, password, nombre, school, course, role } = req.body;
+    try {
+        // 1. Crear en Firebase Auth
+        const userRecord = await admin.auth().createUser({
+            email,
+            password,
+            displayName: nombre
+        });
+
+        // 2. Crear perfil en Firestore
+        await db.collection('users').doc(userRecord.uid).set({
+            nombre,
+            email,
+            school: school || '',
+            course: course || '',
+            role: role || 'student',
+            createdAt: new Date().toISOString()
+        });
+
+        res.json({ success: true, uid: userRecord.uid });
+    } catch (error) {
+        console.error('Error creando usuario:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+/**
+ * @swagger
+ * /api/admin/users/{uid}:
+ *   delete:
+ *     summary: Elimina un usuario por completo
+ */
+app.delete('/api/admin/users/:uid', async (req, res) => {
+    const { uid } = req.params;
+    try {
+        // Eliminar de Auth
+        try {
+            await admin.auth().deleteUser(uid);
+        } catch (e) {
+            console.warn('Usuario no encontrado en Auth, procediendo a borrar Firestore');
+        }
+
+        // Eliminar de Firestore
+        await db.collection('users').doc(uid).delete();
+        
+        // Si era encargado, eliminar de course_managers
+        const managerSnap = await db.collection('course_managers').where('managerUid', '==', uid).get();
+        const batch = db.batch();
+        managerSnap.forEach(doc => batch.delete(doc.ref));
+        await batch.commit();
+
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: 'Error eliminando usuario' });
+    }
+});
+
+/**
+ * @swagger
+ * /api/admin/system/clear-all:
+ *   post:
+ *     summary: LIMPIEZA TOTAL (DANGER) - Borra todos los pedidos, resultados y usuarios no-admin
+ */
+app.post('/api/admin/system/clear-all', async (req, res) => {
+    try {
+        console.log('🔥 INICIANDO LIMPIEZA TOTAL DE DATOS DE PRUEBA...');
+        
+        // 1. Borrar Pedidos
+        const ordersSnap = await db.collection('orders').get();
+        const ordersBatch = db.batch();
+        ordersSnap.forEach(doc => ordersBatch.delete(doc.ref));
+        await ordersBatch.commit();
+        console.log(`✅ ${ordersSnap.size} pedidos eliminados.`);
+
+        // 2. Borrar Resultados de Calculadora
+        const calcSnap = await db.collection('calculator_results').get();
+        const calcBatch = db.batch();
+        calcSnap.forEach(doc => calcBatch.delete(doc.ref));
+        await calcBatch.commit();
+        console.log(`✅ ${calcSnap.size} resultados de calculadora eliminados.`);
+
+        // 3. Borrar Encargados de Curso
+        const managersSnap = await db.collection('course_managers').get();
+        const managersBatch = db.batch();
+        managersSnap.forEach(doc => managersBatch.delete(doc.ref));
+        await managersBatch.commit();
+        console.log(`✅ ${managersSnap.size} encargados eliminados.`);
+
+        // 4. Borrar Usuarios de Auth y Firestore (Excepto el admin logueado o específico)
+        const usersSnap = await db.collection('users').get();
+        let deletedAuthCount = 0;
+        let deletedFsCount = 0;
+
+        for (const userDoc of usersSnap.docs) {
+            const userData = userDoc.data();
+            const uid = userDoc.id;
+
+            // PRESERVAR ADMINS
+            if (userData.role === 'admin' || userData.email === 'inzunzajuan202@gmail.com') {
+                console.log(`🛡️ Preservando administrador: ${userData.email}`);
+                continue;
+            }
+
+            // Borrar de Auth
+            try {
+                await admin.auth().deleteUser(uid);
+                deletedAuthCount++;
+            } catch (e) {
+                console.warn(`No se pudo borrar de Auth (tal vez ya no existe): ${uid}`);
+            }
+
+            // Borrar de Firestore
+            await db.collection('users').doc(uid).delete();
+            deletedFsCount++;
+        }
+
+        res.json({ 
+            success: true, 
+            message: 'Limpieza completada', 
+            details: {
+                orders: ordersSnap.size,
+                calcResults: calcSnap.size,
+                usersAuth: deletedAuthCount,
+                usersFirestore: deletedFsCount
+            }
+        });
+    } catch (error) {
+        console.error('❌ ERROR EN LIMPIEZA TOTAL:', error);
+        res.status(500).json({ error: 'Fallo crítico durante la limpieza: ' + error.message });
     }
 });
 

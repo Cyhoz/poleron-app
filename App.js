@@ -14,6 +14,7 @@ import ClientScreen from './src/screens/ClientScreen';
 import TeacherOrderScreen from './src/screens/TeacherOrderScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import { auth } from './src/services/firebaseConfig';
+import ErrorBoundary from './src/components/ErrorBoundary';
 import { onAuthStateChanged } from 'firebase/auth';
 
 const Stack = createNativeStackNavigator();
@@ -48,40 +49,42 @@ export default function App() {
     <>
       <StatusBar style="light" />
       <NavigationContainer>
-        <Stack.Navigator
-          screenOptions={{
-            headerStyle: { backgroundColor: '#111827' },
-            headerTintColor: '#fff',
-            headerTitleStyle: { fontWeight: 'bold' },
-            animation: 'slide_from_right',
-          }}
-        >
-          <Stack.Screen 
-            name="Home" 
-            component={HomeScreen} 
-            options={{ title: 'Inicio', headerShown: false }} 
-          />
-          <Stack.Screen 
-            name="Auth" 
-            component={AuthScreen} 
-            options={{ title: 'Acceso Alumnos', headerShown: false }} 
-          />
-          <Stack.Screen 
-            name="Client" 
-            component={ClientScreen} 
-            options={{ title: 'Calculadora de Talla' }} 
-          />
-          <Stack.Screen 
-            name="TeacherOrder" 
-            component={TeacherOrderScreen} 
-            options={{ title: 'Pedido Grupal' }} 
-          />
-          <Stack.Screen 
-            name="Admin" 
-            component={AdminScreen} 
-            options={{ title: 'Panel Administrador', headerBackTitle: 'Atrás' }} 
-          />
-        </Stack.Navigator>
+        <ErrorBoundary>
+          <Stack.Navigator
+            screenOptions={{
+              headerStyle: { backgroundColor: '#111827' },
+              headerTintColor: '#fff',
+              headerTitleStyle: { fontWeight: 'bold' },
+              animation: 'slide_from_right',
+            }}
+          >
+            <Stack.Screen 
+              name="Home" 
+              component={HomeScreen} 
+              options={{ title: 'Inicio', headerShown: false }} 
+            />
+            <Stack.Screen 
+              name="Auth" 
+              component={AuthScreen} 
+              options={{ title: 'Acceso Alumnos', headerShown: false }} 
+            />
+            <Stack.Screen 
+              name="Client" 
+              component={ClientScreen} 
+              options={{ title: 'Calculadora de Talla' }} 
+            />
+            <Stack.Screen 
+              name="TeacherOrder" 
+              component={TeacherOrderScreen} 
+              options={{ title: 'Pedido Grupal' }} 
+            />
+            <Stack.Screen 
+              name="Admin" 
+              component={AdminScreen} 
+              options={{ title: 'Panel Administrador', headerBackTitle: 'Atrás' }} 
+            />
+          </Stack.Navigator>
+        </ErrorBoundary>
       </NavigationContainer>
     </>
   );

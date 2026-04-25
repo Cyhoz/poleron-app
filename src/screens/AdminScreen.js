@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Platform, Linking } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Platform, Linking, Modal } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Save, Trash2, Download, Plus, X, ChevronRight, ChevronDown, File, MessageCircle, Phone } from 'lucide-react-native';
+import { Save, Trash2, Download, Plus, X, ChevronRight, ChevronDown, File, MessageCircle, Phone, Users } from 'lucide-react-native';
 import { REGIONES, CURSOS, COLEGIOS_REALES } from '../constants/chileData';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -15,7 +15,8 @@ import {
   saveValidName, deleteValidName, subscribeToValidNames, 
   saveCommonName, deleteCommonName, subscribeToCommonNames,
   saveCommonSurname, deleteCommonSurname, subscribeToCommonSurnames, seedDictionaryBatch,
-  getAllManagers, getUserProfile 
+  getAllManagers, getUserProfile, normalizeExistingValidNames,
+  getAllUsers, deleteUserAccount, createUserAccount, clearSystemData
 } from '../services/firebaseOrderService';
 import { auth, db } from '../services/firebaseConfig';
 import { signInWithEmailAndPassword, onAuthStateChanged } from 'firebase/auth';
@@ -110,7 +111,6 @@ export default function AdminScreen() {
   const [newItemName, setNewItemName] = useState('');
   const [newSchoolCity, setNewSchoolCity] = useState('');
   const [newSchoolCommune, setNewSchoolCommune] = useState('');
-  const [selectedRegionIdx, setSelectedRegionIdx] = useState(null);
   const [isSavingAppData, setIsSavingAppData] = useState(false);
   const [validNames, setValidNames] = useState([]);
   const [newValidName, setNewValidName] = useState('');
@@ -124,9 +124,96 @@ export default function AdminScreen() {
   const [newCommonSurname, setNewCommonSurname] = useState('');
   const [isSeeding, setIsSeeding] = useState(false);
 
+  const [users, setUsers] = useState([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+  const [isUserModalVisible, setIsUserModalVisible] = useState(false);
+  const [newUser, setNewUser] = useState({
+    nombre: '', email: '', password: '', role: 'student', school: '', course: ''
+  });
   const [managers, setManagers] = useState([]);
   const [isLoadingManagers, setIsLoadingManagers] = useState(false);
-  const [managerFilters, setManagerFilters] = useState({ school: '', course: '' });
+
+  const loadUsers = async () => {
+    setIsLoadingUsers(true);
+    const data = await getAllUsers();
+    setUsers(data);
+    setIsLoadingUsers(false);
+  };
+
+  useEffect(() => {
+    if (activeTab === 'users') {
+      loadUsers();
+    }
+  }, [activeTab]);
+
+  const handleDeleteUser = (uid) => {
+    Alert.alert(
+      "Eliminar Usuario",
+      "¿Estás seguro de que quieres eliminar a este usuario por completo? Esta acción no se puede deshacer.",
+      [
+        { text: "Cancelar", style: "cancel" },
+        { 
+          text: "Eliminar", 
+          style: "destructive", 
+          onPress: async () => {
+            const success = await deleteUserAccount(uid);
+            if (success) {
+              Alert.alert("Éxito", "Usuario eliminado correctamente.");
+              loadUsers();
+            } else {
+              Alert.alert("Error", "No se pudo eliminar al usuario.");
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleCreateUser = async () => {
+    if (!newUser.email || !newUser.password || !newUser.nombre) {
+      Alert.alert("Error", "Email, Contraseña y Nombre son obligatorios.");
+      return;
+    }
+    try {
+      await createUserAccount(newUser);
+      Alert.alert("Éxito", "Usuario creado correctamente.");
+      setIsUserModalVisible(false);
+      setNewUser({ nombre: '', email: '', password: '', role: 'student', school: '', course: '' });
+      loadUsers();
+    } catch (error) {
+      Alert.alert("Error", error.message);
+    }
+  };
+
+  const handleClearAllData = () => {
+    Alert.alert(
+      "☢️ ZONA DE PELIGRO ☢️",
+      "Esto eliminará TODOS los pedidos, resultados de la calculadora y usuarios (excepto administradores). ¿Estás ABSOLUTAMENTE seguro?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        { 
+          text: "SÍ, LIMPIAR TODO", 
+          style: "destructive", 
+          onPress: async () => {
+            setIsSeeding(true); // Reutilizamos el loader
+            try {
+              const res = await clearSystemData();
+              if (res.success) {
+                Alert.alert("Limpieza Exitosa", `Se borraron ${res.details.orders} pedidos y ${res.details.usersAuth} usuarios.`);
+                loadUsers();
+              } else {
+                Alert.alert("Error", res.error);
+              }
+            } catch (e) {
+              Alert.alert("Error", e.message);
+            } finally {
+              setIsSeeding(false);
+            }
+          }
+        }
+      ]
+    );
+  };
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -271,22 +358,28 @@ export default function AdminScreen() {
 
       const formattedData = listToExport.flatMap(o => {
         if (o.type === 'GROUP_ORDER') {
-          const g = o.groupInfo || {};
           return (o.estudiantes || []).map(s => ({
-            'Nombre del Alumno': `${s.nombre || ''} ${s.apellido || ''}`.trim(),
-            'Colegio': g.colegio || '',
-            'Curso': g.curso || '',
-            'Talla': s.talla || '',
-            'Tipo Pedido': 'GRUPAL'
+            'ID Pedido': o.id,
+            'Fecha': new Date(o.date).toLocaleDateString(),
+            'Colegio': o.groupInfo?.colegio || 'N/A',
+            'Curso': o.groupInfo?.curso || 'N/A',
+            'Encargado': `${o.requesterInfo?.nombre || ''} ${o.requesterInfo?.apellido || ''}`,
+            'Producto': o.producto || 'N/A',
+            'Nombre Alumno': `${s.nombre || ''} ${s.apellido || ''}`,
+            'Apodo': s.apodo || '',
+            'Talla': s.talla || ''
           }));
         } else {
-          const p = o.personalInfo || {};
           return [{
-            'Nombre del Alumno': `${p.nombre || ''} ${p.apellido || ''}`.trim(),
-            'Colegio': p.colegio || '',
-            'Curso': p.curso || '',
-            'Talla': o.tallaElegida || '',
-            'Tipo Pedido': 'INDIVIDUAL'
+            'ID Pedido': o.id,
+            'Fecha': new Date(o.date).toLocaleDateString(),
+            'Colegio': o.personalInfo?.colegio || 'N/A',
+            'Curso': o.personalInfo?.curso || 'N/A',
+            'Encargado': 'Individual',
+            'Producto': o.producto || 'N/A',
+            'Nombre Alumno': `${o.personalInfo?.nombre || ''} ${o.personalInfo?.apellido || ''}`,
+            'Apodo': '',
+            'Talla': o.tallaElegida || ''
           }];
         }
       });
@@ -348,10 +441,14 @@ export default function AdminScreen() {
   const saveSettings = async () => {
     setIsSaving(true);
     try {
-      await saveAdminSizes(measurements);
-      Alert.alert('Éxito', 'Medidas guardadas.');
+      const res = await saveAdminSizes(measurements);
+      if (res.success) {
+        Alert.alert('Éxito', 'Medidas guardadas correctamente en la nube.');
+      } else {
+        Alert.alert('Error de Conexión', `No se pudieron guardar las medidas: ${res.error}`);
+      }
     } catch (e) {
-      Alert.alert('Error', 'No se pudieron guardar.');
+      Alert.alert('Error Inesperado', e.message || 'Error al procesar la solicitud.');
     } finally {
       setIsSaving(false);
     }
@@ -360,10 +457,14 @@ export default function AdminScreen() {
   const handleSaveAppData = async () => {
     setIsSavingAppData(true);
     try {
-      await saveAppData(appData);
-      Alert.alert('Éxito', 'Configuración de la app guardada.');
+      const res = await saveAppData(appData);
+      if (res.success) {
+        Alert.alert('Éxito', 'Configuración de la app sincronizada.');
+      } else {
+        Alert.alert('Error de Base de Datos', `Fallo al guardar: ${res.error}`);
+      }
     } catch (e) {
-      Alert.alert('Error', 'No se pudo guardar.');
+      Alert.alert('Error', 'No se pudo guardar la configuración.');
     } finally {
       setIsSavingAppData(false);
     }
@@ -371,20 +472,36 @@ export default function AdminScreen() {
 
   const handleAddSchool = async () => {
     if (!newItemName.trim()) return;
-    const newSchool = {
-      nombre: newItemName.trim(),
-      ciudad: newSchoolCity.trim() || 'N/A',
-      comuna: newSchoolCommune.trim() || 'N/A'
-    };
-    const updatedSchools = [newSchool, ...appData.schools];
-    const updatedData = { ...appData, schools: updatedSchools };
-    setAppData(updatedData);
-    setNewItemName('');
-    setNewSchoolCity('');
-    setNewSchoolCommune('');
     
-    // PERSISTENCIA INMEDIATA
-    await saveAppData(updatedData);
+    const schoolName = newItemName.trim().toUpperCase();
+    const city = newSchoolCity.trim() || 'N/A';
+    const commune = newSchoolCommune.trim() || 'N/A';
+
+    const newSchool = {
+      nombre: schoolName,
+      ciudad: city,
+      comuna: commune
+    };
+    
+    setIsSavingAppData(true);
+    try {
+      const updatedSchools = [newSchool, ...appData.schools];
+      const updatedData = { ...appData, schools: updatedSchools };
+      
+      const res = await saveAppData(updatedData);
+      if (res.success) {
+        setAppData(updatedData);
+        setNewItemName('');
+        setNewSchoolCity('');
+        setNewSchoolCommune('');
+      } else {
+        Alert.alert('Error', `No se pudo agregar el colegio: ${res.error}`);
+      }
+    } catch (error) {
+       Alert.alert('Error', 'Error al procesar el nuevo colegio.');
+    } finally {
+      setIsSavingAppData(false);
+    }
   };
 
   const handleRemoveSchool = async (index) => {
@@ -394,20 +511,15 @@ export default function AdminScreen() {
     await saveAppData(updatedData);
   };
 
-  const handleAddCourse = () => {
-    if (!newItemName.trim()) return;
-    setAppData({ ...appData, courses: [...appData.courses, newItemName.trim()] });
-    setNewItemName('');
-  };
-
-  const handleRemoveCourse = (index) => {
-    setAppData({ ...appData, courses: appData.courses.filter((_, i) => i !== index) });
-  };
-
   const handleAddValidName = async () => {
     if (!newValidName.trim()) return;
-    await saveValidName(newValidName);
-    setNewValidName('');
+    const name = newValidName.trim().toUpperCase();
+    const res = await saveValidName(name);
+    if (res.success) {
+      setNewValidName('');
+    } else {
+      Alert.alert('Error', `No se pudo autorizar el nombre: ${res.error}`);
+    }
   };
 
   const handleAddCommonName = async () => {
@@ -429,23 +541,60 @@ export default function AdminScreen() {
         "MATEO", "SANTIAGO", "BENJAMIN", "LUCAS", "LIAM", "AGUSTIN", "VICENTE", "MAXIMILIANO", "JOAQUIN", "GASPAR",
         "TOMAS", "JOSE", "JUAN", "LUIS", "CARLOS", "FRANCISCO", "ALONSO", "SEBASTIAN", "FACUNDO", "BASTIAN",
         "MARTIN", "NICOLAS", "JAVIER", "DIEGO", "MATIAS", "IGNACIO", "FELIPE", "GABRIEL", "RODRIGO", "ALVARO",
+        "GONZALO", "CRISTIAN", "RICARDO", "CLAUDIO", "PATRICIO", "JORGE", "MANUEL", "ROBERTO", "SERGIO", "FERNANDO",
+        "ANDRES", "ALEJANDRO", "EDUARDO", "VICTOR", "HUGO", "RAUL", "MARIO", "HECTOR", "RENE", "OSCAR",
+        "JAIME", "GUILLERMO", "PEDRO", "PABLO", "MIGUEL", "ANGEL", "ALBERTO", "ENRIQUE", "RAFAEL", "GUSTAVO",
+        "LEONARDO", "MARCELO", "MARCO", "MAURICIO", "HERNAN", "ORLANDO", "IVAN", "RUBEN", "ALFONSO", "NELSON",
+        "GASTON", "WALDO", "ARIEL", "BORIS", "BRUNO", "CESAR", "DANTE", "DARIO", "EFRAIN", "ELIAS", "ESTEBAN",
+        "FABIO", "FEDERICO", "FELIX", "GERMAN", "GUIDO", "HOMERO", "ISAAC", "ISMAEL", "ISRAEL", "ITALO", "JULIAN",
+        "JUSTO", "LAUTARO", "LEANDRO", "LEONEL", "LORENZO", "LUCIANO", "MAURO", "MILO", "NAHUEL", "NOE", "OCTAVIO",
+        "OMAR", "OTTO", "PAULO", "PIERO", "QUINTIN", "RAMIRO", "RENZO", "ROMAN", "ROQUE", "SAUL", "SILVIO", "TADEO",
+        "TEO", "TULIO", "ULISES", "VASCO", "XAVIER", "YERKO", "ZACARIAS",
         "SOFIA", "EMMA", "EMILIA", "ISABELLA", "JULIETA", "TRINIDAD", "ISIDORA", "AGUSTINA", "JOSEFA", "LUCIANA",
-        "AMANDA", "ANTONIA", "FLORENCIA", "VALENTINA", "MARTINA", "MARIA", "ANA", "ELSA", "CARMEN", "PATRICIA"
+        "AMANDA", "ANTONIA", "FLORENCIA", "VALENTINA", "MARTINA", "MARIA", "ANA", "ELSA", "CARMEN", "PATRICIA",
+        "LORETO", "CAMILA", "JAVIERA", "CATALINA", "CONSTANZA", "FERNANDA", "PAULA", "VALERIA", "DANIELA", "CARLA",
+        "FRANCISCA", "BARBARA", "ANDREA", "NATALIA", "CLAUDIA", "MONICA", "VERONICA", "SANDRA", "ROSA", "TERESA",
+        "ELENA", "LUCIA", "BEATRIZ", "MERCEDES", "PILAR", "XIMENA", "SONIA", "ADRIANA", "GLORIA", "MARTA", "INES",
+        "SILVIA", "SARA", "ALICIA", "REBECA", "DIANA", "RAQUEL", "ESTER", "LIDIA", "OLGA", "YOLANDA", "NANCY",
+        "NORMA", "GRACIELA", "CECILIA", "MIRIAM", "IRENE", "MARISOL", "LORENA", "KARINA", "MARCELA", "SUSANA"
       ];
       const surnames = [
         "GONZALEZ", "MUÑOZ", "ROJAS", "DIAZ", "PEREZ", "SOTO", "CONTRERAS", "SILVA", "MARTINEZ", "SEPULVEDA",
         "MORALES", "RODRIGUEZ", "LOPEZ", "FUENTES", "HERNANDEZ", "TORRES", "ARAYA", "FLORES", "CASTILLO", "ESPINOZA",
-        "VALENZUELA", "CASTRO", "REYES", "GUTIERREZ", "PIZARRO", "VASQUEZ", "TAPIA", "SANCHEZ", "VERA", "JARA"
+        "VALENZUELA", "CASTRO", "REYES", "GUTIERREZ", "PIZARRO", "VASQUEZ", "TAPIA", "SANCHEZ", "VERA", "JARA",
+        "CARRASCO", "GOMEZ", "BELTRAN", "VILLALOBOS", "BRAVO", "NUÑEZ", "HENRIQUEZ", "ARAVENA", "LIZANA", "MALDONADO",
+        "SALINAS", "RIVERA", "AGUILERA", "VENEGAS", "FARIAS", "LAGOS", "PINO", "GODOY", "ARANCIBIA", "GALLARDO",
+        "SALAZAR", "GUZMAN", "SAAVEDRA", "MELLADO", "GARCES", "ORELLANA", "NAVARRETE", "SANHUEZA", "CATALAN", "ORTIZ",
+        "CACERES", "SANDOVAL", "FIGUEROA", "GARRIDO", "VALDES", "OSORIO", "RAMIREZ", "VALDENEGRO", "GALLEGOS", "PARDO",
+        "HERRERA", "POBLETE", "GUERRERO", "OLIVARES", "PALMA", "PAREDES", "DONOSO", "MATURANA", "BAHAMONDES", "VIDAL",
+        "ZUÑIGA", "OLIVA", "CERDA", "QUINTANILLA", "ESCOBAR", "MIRANDA", "DUARTE", "VERGARA", "ACEVEDO", "MENDEZ",
+        "PARRA", "BRIONES", "PACHECO", "VILLANUEVA", "CUEVAS", "QUINTEROS", "SALGADO", "INOSTROZA", "GUAJARDO"
       ];
 
-      const success = await seedDictionaryBatch(names, surnames);
-      if (success) {
+      const result = await seedDictionaryBatch(names, surnames);
+      if (result.success) {
         Alert.alert('Éxito', 'Diccionario base cargado correctamente.');
       } else {
-        Alert.alert('Error', 'Fallo al cargar el diccionario.');
+        Alert.alert('Error de Firebase', result.error || 'Fallo desconocido al cargar el diccionario.');
       }
     } catch (e) {
-      Alert.alert('Error', 'Fallo al cargar el diccionario.');
+      Alert.alert('Error de Aplicación', e.message || 'Error inesperado.');
+    } finally {
+      setIsSeeding(false);
+    }
+  };
+
+  const handleNormalizeNames = async () => {
+    setIsSeeding(true);
+    try {
+      const res = await normalizeExistingValidNames();
+      if (res.success) {
+        Alert.alert('Éxito', `Se normalizaron ${res.count} nombres. Ahora todos los alumnos podrán registrarse sin problemas de acentos.`);
+      } else {
+        Alert.alert('Error', res.error);
+      }
+    } catch (e) {
+      Alert.alert('Error', e.message);
     } finally {
       setIsSeeding(false);
     }
@@ -544,9 +693,13 @@ export default function AdminScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.tabsContainer}>
-        {['tallas', 'configApp', 'pedidos', 'encargados'].map(tab => (
+        {['tallas', 'configApp', 'pedidos', 'encargados', 'users'].map(tab => (
           <TouchableOpacity key={tab} style={[styles.tab, activeTab === tab && styles.activeTab]} onPress={() => setActiveTab(tab)}>
-            <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>{tab.toUpperCase()}</Text>
+            {tab === 'users' ? (
+              <Users color={activeTab === tab ? "#3B82F6" : "#64748B"} size={18} />
+            ) : (
+              <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>{tab.toUpperCase()}</Text>
+            )}
           </TouchableOpacity>
         ))}
       </View>
@@ -693,6 +846,14 @@ export default function AdminScreen() {
             </View>
 
             <TouchableOpacity 
+              style={[styles.saveButton, {backgroundColor: '#8B5CF6', marginTop: 10}]} 
+              onPress={handleNormalizeNames}
+              disabled={isSeeding}
+            >
+              {isSeeding ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>✨ Normalizar Nombres (Arreglar Acentos)</Text>}
+            </TouchableOpacity>
+
+            <TouchableOpacity 
               style={[styles.saveButton, {backgroundColor: '#6366F1', marginTop: 10, marginBottom: 16}]} 
               onPress={handleSeedDictionary}
               disabled={isSeeding}
@@ -701,6 +862,17 @@ export default function AdminScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity style={[styles.saveButton, {backgroundColor: '#374151'}]} onPress={handleResetAppData}><Text style={styles.saveButtonText}>Restablecer Todo</Text></TouchableOpacity>
+
+            <View style={{marginTop: 40, paddingTop: 20, borderTopWidth: 1, borderTopColor: '#EF4444'}}>
+               <Text style={{color: '#EF4444', fontWeight: 'bold', marginBottom: 10, textAlign: 'center'}}>ZONA DE DESARROLLO / PRUEBAS</Text>
+               <TouchableOpacity 
+                 style={[styles.saveButton, {backgroundColor: '#EF4444'}]} 
+                 onPress={handleClearAllData}
+                 disabled={isSeeding}
+               >
+                 {isSeeding ? <ActivityIndicator color="#fff" /> : <Text style={styles.saveButtonText}>🔥 LIMPIAR PEDIDOS Y USUARIOS TEST</Text>}
+               </TouchableOpacity>
+            </View>
           </View>
         )}
 
@@ -725,7 +897,6 @@ export default function AdminScreen() {
               </View>
             ))}
 
-            {/* Modal de Respuestas Rápidas */}
             {isWhatsAppModalVisible && (
               <View style={styles.modalOverlay}>
                 <View style={styles.modalContent}>
@@ -762,6 +933,45 @@ export default function AdminScreen() {
                   <Text style={{color: '#3B82F6'}}>{m.school} - {m.course}</Text>
                </View>
              ))}
+          </View>
+        )}
+
+        {activeTab === 'users' && (
+          <View>
+            <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20}}>
+              <Text style={{color: '#fff', fontSize: 18, fontWeight: 'bold'}}>Gestión de Usuarios</Text>
+              <TouchableOpacity style={[styles.addButton, {paddingHorizontal: 15}]} onPress={() => setIsUserModalVisible(true)}>
+                <Text style={{color: '#fff', fontWeight: 'bold'}}>+ Nuevo</Text>
+              </TouchableOpacity>
+            </View>
+
+            {isLoadingUsers ? <ActivityIndicator color="#3B82F6" /> : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View style={{borderWidth: 1, borderColor: '#374151', borderRadius: 10}}>
+                  {users.map(u => (
+                    <View key={u.uid} style={{flexDirection: 'row', padding: 12, borderBottomWidth: 1, borderColor: '#374151', alignItems: 'center'}}>
+                      <View style={{width: 150}}><Text style={{color: '#fff'}}>{u.nombre}</Text></View>
+                      <View style={{width: 200}}><Text style={{color: '#9CA3AF'}}>{u.email}</Text></View>
+                      <View style={{width: 80}}><Text style={{color: '#3B82F6'}}>{u.role}</Text></View>
+                      <TouchableOpacity onPress={() => handleDeleteUser(u.uid)}><Trash2 color="#EF4444" size={18} /></TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+            )}
+
+            <Modal visible={isUserModalVisible} transparent animationType="fade">
+              <View style={styles.modalOverlay}>
+                <View style={styles.modalContent}>
+                   <Text style={styles.modalTitle}>Nuevo Usuario</Text>
+                   <TextInput style={styles.input} placeholder="Nombre" placeholderTextColor="#666" value={newUser.nombre} onChangeText={t => setNewUser({...newUser, nombre: t})} />
+                   <TextInput style={styles.input} placeholder="Email" placeholderTextColor="#666" value={newUser.email} onChangeText={t => setNewUser({...newUser, email: t})} />
+                   <TextInput style={styles.input} placeholder="Contraseña" placeholderTextColor="#666" value={newUser.password} onChangeText={t => setNewUser({...newUser, password: t})} secureTextEntry />
+                   <TouchableOpacity style={styles.saveButton} onPress={handleCreateUser}><Text style={styles.saveButtonText}>Guardar Usuario</Text></TouchableOpacity>
+                   <TouchableOpacity style={[styles.saveButton, {marginTop: 10, backgroundColor: '#4B5563'}]} onPress={() => setIsUserModalVisible(false)}><Text style={styles.saveButtonText}>Cancelar</Text></TouchableOpacity>
+                </View>
+              </View>
+            </Modal>
           </View>
         )}
       </ScrollView>
